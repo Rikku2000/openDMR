@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>openDMR</title>
+		<link rel="stylesheet" href="styles.css" />
+	</head>
+	<body>
+		<header class="header">
+			<button id="theme" class="btn"><h1>openDMR</h1></button>
+			<div class="actions">
+				<button onclick="location.href='index.html';" class="btn">Dashboard</button>
+				<button onclick="location.href='monitor.html';" class="btn">Monitor</button>
+			</div>
+		</header>
+
+		<main class="container">
+			<section class="card">
+				<div class="card-head">
+					<h3>Server Monitor</h3>
+				</div>
+				<pre id="stat" class="pre"></pre>
+			</section>
+		</main>
+
+		<script type="module" src="app.js"></script>
+	</body>
+</html>

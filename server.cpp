@@ -26,6 +26,25 @@ dword tg_old;
 dword slotid_old;
 dword nodeid_old;
 
+#ifdef HAVE_HTTPMODE
+int g_monitor_enabled = 1;
+int g_monitor_port = 62080;
+char g_monitor_root[256] = "www";
+
+typedef struct {
+    int  used;
+    int  radio;
+    int  tg;
+    int  src;
+    int  aprs;
+    int  sms;
+    unsigned last_sec;
+} MonMark;
+
+#define MONMARK_N 1024
+static MonMark g_marks[MONMARK_N];
+#endif
+
 int obp_local_port = 62044;
 char ob_host[MAX_PASSWORD_SIZE];
 int obp_remote_port = 62044;
@@ -1144,6 +1163,12 @@ void handle_rx (sockaddr_in &addr, byte *pk, int pksize)
 			aprs_send_heard(radioid, tg, nodeid);
 #endif
 
+#ifdef HAVE_HTTPMODE
+		int is_aprs_flag = 0;
+		if (tg == g_aprs_tg)
+			is_aprs_flag = 1;
+#endif
+
 		if (g_debug)
 			logmsg (LOG_CYAN, 0, "node %d slot %d radio %d group %d stream %08X flags %02X\n\n", nodeid, SLOT(slotid)+1, radioid, tg, streamid, flags);
 
@@ -1171,6 +1196,9 @@ void handle_rx (sockaddr_in &addr, byte *pk, int pksize)
 				}
 				if (bEndStream && s->sms.streamid == streamid) {
 					sms_emit_udp(radioid, tg, bPrivateCall ? true : false, s->sms);
+#ifdef HAVE_HTTPMODE
+					monitor_note_event((int)radioid, (int)tg, MON_SRC_LOCAL, is_aprs_flag, 1);
+#endif
 				}
 			} else {
 				if (bEndStream && s->sms.streamid == streamid) sms_reset(s->sms);
@@ -1206,6 +1234,11 @@ void handle_rx (sockaddr_in &addr, byte *pk, int pksize)
 				sqlite3_free(zErrMsg);
 			s->node->timer++;
 		}
+
+#ifdef HAVE_HTTPMODE
+		monitor_note_event((int)radioid, (int)tg, MON_SRC_LOCAL, is_aprs_flag, 0);
+#endif
+
 		radioid_old = radioid;
 		tg_old = tg;
 		slotid_old = slotid;
@@ -1766,6 +1799,367 @@ void sms_emit_udp(dword radioid, dword dest, bool is_private, sms_buf &sb)
 }
 #endif
 
+#ifdef HAVE_HTTPMODE
+static unsigned now_sec(void){ return (unsigned)time(NULL); }
+
+static MonMark* mark_get_slot(int radio){
+    if (radio <= 0) return NULL;
+    unsigned h = (unsigned)radio * 2654435761u;
+    unsigned i = (h >> 22) % MONMARK_N;
+    for (unsigned k=0; k<MONMARK_N; ++k){
+        MonMark* m = &g_marks[(i+k)%MONMARK_N];
+        if (!m->used || m->radio == radio) return m;
+    }
+    return &g_marks[i];
+}
+
+void monitor_note_event(int radio, int tg, MonSrc src, int is_aprs, int is_sms){
+    MonMark* m = mark_get_slot(radio);
+    if (!m) return;
+    m->used = 1;
+    m->radio = radio;
+    if (tg>0) m->tg = tg;
+    if (src != MON_SRC_UNKNOWN) m->src = src;
+    if (is_aprs>=0) m->aprs = is_aprs ? 1:0;
+    if (is_sms>=0)  m->sms  = is_sms  ? 1:0;
+    m->last_sec = now_sec();
+}
+
+static struct { char bind_ip[64]; int port; char doc_root[512]; } G = {"127.0.0.1", 8080, "www"};
+#ifdef _WIN32
+static HANDLE g_thread = NULL; static volatile LONG g_run = 0; static sock_t g_listen = SOCK_INVALID;
+#else
+static pthread_t g_thread; static volatile int g_run = 0; static sock_t g_listen = SOCK_INVALID;
+#endif
+
+static void appendf(char **pp, size_t *left, const char *fmt, ...) {
+    va_list ap; va_start(ap, fmt);
+    int n = vsnprintf(*pp, *left, fmt, ap);
+    va_end(ap);
+    if (n < 0) { *left = 0; return; }
+    if ((size_t)n >= *left) { *left = 0; return; }
+    *pp += n; *left -= (size_t)n;
+}
+
+static const char* http_time_now(void){
+    static char buf[64]; time_t now=time(NULL);
+#ifdef _WIN32
+    struct tm t; localtime_s(&t,&now);
+#else
+    struct tm t; localtime_r(&now,&t);
+#endif
+    strftime(buf,sizeof(buf),"%a, %d %b %Y %H:%M:%S %Z",&t); return buf;
+}
+
+#ifdef _WIN32
+  #define STRCASECMP _stricmp
+#else
+  #include <strings.h>
+  #define STRCASECMP strcasecmp
+#endif
+
+static const char* mime_from_ext(const char* path){
+    const char* ext = strrchr(path, '.'); if(!ext) return "application/octet-stream"; ++ext;
+    if(!STRCASECMP(ext,"html")||!STRCASECMP(ext,"htm")) return "text/html; charset=utf-8";
+    if(!STRCASECMP(ext,"css")) return "text/css; charset=utf-8";
+    if(!STRCASECMP(ext,"js")) return "application/javascript";
+    if(!STRCASECMP(ext,"json")) return "application/json";
+    if(!STRCASECMP(ext,"png")) return "image/png";
+    if(!STRCASECMP(ext,"jpg")||!STRCASECMP(ext,"jpeg")) return "image/jpeg";
+    if(!STRCASECMP(ext,"svg")) return "image/svg+xml";
+    if(!STRCASECMP(ext,"ico")) return "image/x-icon";
+    return "application/octet-stream";
+}
+
+static int fetch_stat(char* out, size_t cap) {
+    if (!out || cap==0) return -1; out[0]=0;
+    sock_t s = socket(AF_INET, SOCK_DGRAM, 0); if (s == SOCK_INVALID) return -1;
+#ifdef _WIN32
+    DWORD tv = 2500; setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
+#else
+    struct timeval tv = {2,500000}; setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+#endif
+    struct sockaddr_in dst; memset(&dst,0,sizeof(dst));
+    dst.sin_family = AF_INET; dst.sin_port = htons((uint16_t)g_udp_port);
+#ifdef _WIN32
+    InetPtonA(AF_INET, "127.0.0.1", &dst.sin_addr);
+#else
+    inet_pton(AF_INET, "127.0.0.1", &dst.sin_addr);
+#endif
+    const char* msg = "/STAT"; int mlen = 5;
+    if (sendto(s, msg, mlen, 0, (struct sockaddr*)&dst, sizeof(dst)) < 0) { CLOSESOCK(s); return -1; }
+    struct sockaddr_in from; socklen_t fl = sizeof(from);
+    int n = recvfrom(s, out, (int)cap-1, 0, (struct sockaddr*)&from, &fl);
+    if (n < 0) { CLOSESOCK(s); return -1; }
+    out[n]=0; CLOSESOCK(s); return n;
+}
+
+struct io { sock_t fd; };
+static int io_recv(struct io* io, char* buf, int cap){
+#ifdef _WIN32
+    return recv(io->fd, buf, cap, 0);
+#else
+    return (int)recv(io->fd, buf, cap, 0);
+#endif
+}
+static int io_send_all(struct io* io, const char* data, size_t len){ size_t off=0; while(off<len){
+#ifdef _WIN32
+    int n = send(io->fd, data+off, (int)(len-off), 0);
+#else
+    int n = (int)send(io->fd, data+off, (int)(len-off), 0);
+#endif
+    if (n<=0) return -1; off += (size_t)n; } return 0; }
+static void io_close(struct io* io){ CLOSESOCK(io->fd); }
+static void http_send(int code, const char* reason, const char* ctype, const char* body, struct io* io){
+    char hdr[512]; int n = snprintf(hdr,sizeof(hdr),
+        "HTTP/1.1 %d %s\r\nDate: %s\r\nServer: dmr-monitor/2\r\nContent-Type: %s\r\nCache-Control: no-store\r\nContent-Length: %zu\r\n\r\n",
+        code,reason,http_time_now(),ctype,(size_t)strlen(body));
+    io_send_all(io,hdr,(size_t)n); io_send_all(io,body,strlen(body));
+}
+static void http_404(struct io* io){ http_send(404, "Not Found", "text/plain", "Not found", io); }
+
+static int serve_static(struct io* io, const char* url){
+    char rel[768]; const char* p = url; if (*p=='/') ++p; size_t i=0;
+    for (; *p && *p!='?' && i<sizeof(rel)-1; ++p){ char c=*p; if (c=='\\') c='/'; rel[i++]=c; } rel[i]=0;
+    if (rel[0]==0) strcpy(rel, "index.html");
+    if (strstr(rel,"../")||strstr(rel,"/..")||strstr(rel,"..\\")) return 0;
+
+    char full[1024];
+#ifdef _WIN32
+    snprintf(full,sizeof(full), "%s\\%s", G.doc_root, rel); for(char* q=full; *q; ++q) if (*q=='/') *q='\\';
+#else
+    snprintf(full,sizeof(full), "%s/%s", G.doc_root, rel);
+#endif
+
+    FILE* f = fopen(full, "rb"); if (!f) return 0;
+    if (fseek(f,0,SEEK_END)!=0) { fclose(f); return 0; }
+    long sz = ftell(f); if (sz<0) { fclose(f); return 0; } rewind(f);
+
+	char lm[64] = "";
+#ifdef _WIN32
+    int fd = _fileno(f);
+    if (fd >= 0) {
+        HANDLE h = (HANDLE)_get_osfhandle(fd);
+        if (h != INVALID_HANDLE_VALUE) {
+            FILETIME ftWrite, ftCreate, ftAccess;
+            if (GetFileTime(h, &ftCreate, &ftAccess, &ftWrite)) {
+                ULARGE_INTEGER uli;
+                uli.LowPart  = ftWrite.dwLowDateTime;
+                uli.HighPart = ftWrite.dwHighDateTime;
+                unsigned long long secs_since_1601 = uli.QuadPart / 10000000ULL;
+                const unsigned long long EPOCH_DIFF = 11644473600ULL;
+                if (secs_since_1601 > EPOCH_DIFF) {
+                    time_t mt = (time_t)(secs_since_1601 - EPOCH_DIFF);
+                    struct tm tt;
+                    localtime_s(&tt, &mt);
+                    strftime(lm, sizeof(lm), "%a, %d %b %Y %H:%M:%S %Z", &tt);
+                }
+            }
+        }
+    }
+#else
+    int fd = fileno(f);
+    if (fd >= 0) {
+        struct stat st;
+        if (fstat(fd, &st) == 0) {
+            time_t mt = st.st_mtime;
+            struct tm tt;
+            localtime_r(&mt, &tt);
+            strftime(lm, sizeof(lm), "%a, %d %b %Y %H:%M:%S %Z", &tt);
+        }
+    }
+#endif
+
+	char hdr[512];
+	int n = snprintf(hdr, sizeof(hdr),
+		"HTTP/1.1 200 OK\r\nDate: %s\r\nServer: dmr-monitor/2\r\n"
+		"Content-Type: %s\r\nCache-Control: no-store\r\nContent-Length: %ld\r\n",
+		http_time_now(), mime_from_ext(full), sz);
+	if (lm[0]) n += snprintf(hdr+n, sizeof(hdr)-n, "Last-Modified: %s\r\n", lm);
+	n += snprintf(hdr+n, sizeof(hdr)-n, "\r\n");
+	io_send_all(io, hdr, (size_t)n);
+
+    char buf[16384]; size_t r; while ((r=fread(buf,1,sizeof(buf),f))>0) if (io_send_all(io,buf,r)!=0) break; fclose(f); return 1;
+}
+
+static void mark_read(int radio, int* src, int* aprs, int* sms){
+    if (src) *src = 0; if (aprs) *aprs = 0; if (sms) *sms = 0;
+    MonMark* m = mark_get_slot(radio);
+    if (!m || !m->used || m->radio != radio) return;
+    if (src)  *src  = m->src;
+    if (aprs) *aprs = m->aprs;
+    if (sms)  *sms  = m->sms;
+}
+
+static void api_log(struct io* io, const char* path){
+    if (!db){ http_send(500, "DB Closed", "application/json", "[]", io); return; }
+
+    int limit = 20;
+    const char* k = strstr(path, "limit=");
+    if (k) { int v = atoi(k+6); if (v >= 1 && v <= 500) limit = v; }
+
+    const char* q =
+        "SELECT l.ID, l.DATE, l.RADIO, l.TG, l.SLOT, l.NODE, l.TIME, l.ACTIVE, l.CONNECT, "
+        "       CASE WHEN EXISTS (SELECT 1 FROM LOG la WHERE la.RADIO = l.RADIO AND la.ACTIVE = 1) "
+        "            THEN 1 ELSE 0 END AS ONLINE "
+        "FROM LOG l "
+        "JOIN ( "
+        "   SELECT RADIO, MAX(ID) AS max_id "
+        "   FROM LOG "
+        "   GROUP BY RADIO "
+        ") m ON l.RADIO = m.RADIO AND l.ID = m.max_id "
+        "ORDER BY l.ID DESC "
+        "LIMIT ?";
+
+    sqlite3_stmt* st = NULL;
+    if (sqlite3_prepare_v2(db, q, -1, &st, NULL) != SQLITE_OK) {
+        http_send(500, "Query Error", "application/json", "[]", io);
+        return;
+    }
+    sqlite3_bind_int(st, 1, limit);
+
+    char* out = (char*)malloc(65536);
+    char* p = out; size_t left = 65536;
+    appendf(&p, &left, "["); int first = 1;
+
+    while (sqlite3_step(st) == SQLITE_ROW){
+        int id    = sqlite3_column_int(st, 0);
+        const unsigned char* date = sqlite3_column_text(st, 1);
+        int radio = sqlite3_column_int(st, 2);
+        int tg    = sqlite3_column_int(st, 3);
+        int slot  = sqlite3_column_int(st, 4);
+        int node  = sqlite3_column_int(st, 5);
+        int sec   = sqlite3_column_int(st, 6);
+        int active= sqlite3_column_int(st, 7);
+        int conn  = sqlite3_column_int(st, 8);
+        int online= sqlite3_column_int(st, 9);
+		int src=0, aprs=0, sms=0;
+		mark_read(radio, &src, &aprs, &sms);
+
+		appendf(&p,&left,
+		  "%s{\"id\":%d,\"date\":\"%s\",\"radio\":%d,\"tg\":%d,\"slot\":%d,"
+		  "\"node\":%d,\"time\":%d,\"active\":%d,\"online\":%d,\"connect\":%d,"
+		  "\"src\":%d,\"aprs\":%d,\"sms\":%d}",
+		  first?"":",",
+		  id, date?(const char*)date:"", radio, tg, slot, node, sec, active, online, conn,
+		  src, aprs, sms);
+
+        first = 0;
+        if (left < 256) break;
+    }
+    sqlite3_finalize(st);
+
+    appendf(&p, &left, "]");
+    http_send(200, "OK", "application/json", out, io);
+    free(out);
+}
+
+static void api_active(struct io* io){
+    if (!db){ http_send(500, "DB Closed", "application/json", "[]", io); return; }
+
+    const char* q =
+        "SELECT DATE, RADIO, TG, SLOT, NODE, TIME "
+        "FROM LOG WHERE ACTIVE=1 "
+        "ORDER BY ID DESC LIMIT 1";
+
+    sqlite3_stmt* st=NULL; sqlite3_prepare_v2(db,q,-1,&st,NULL);
+
+    char* out = (char*)malloc(4096); char* p=out; size_t left=4096;
+    appendf(&p,&left,"["); int first=1;
+
+    while (sqlite3_step(st)==SQLITE_ROW){
+        const unsigned char* date=sqlite3_column_text(st,0);
+        int radio=sqlite3_column_int(st,1), tg=sqlite3_column_int(st,2),
+            slot=sqlite3_column_int(st,3), node=sqlite3_column_int(st,4),
+            sec=sqlite3_column_int(st,5);
+		int src=0, aprs=0, sms=0;
+		mark_read(radio, &src, &aprs, &sms);
+
+		appendf(&p,&left,
+		  "%s{\"date\":\"%s\",\"radio\":%d,\"tg\":%d,\"slot\":%d,\"node\":%d,\"time\":%d,"
+		  "\"src\":%d,\"aprs\":%d,\"sms\":%d}",
+		  first?"":",", date?(const char*)date:"", radio, tg, slot, node, sec,
+		  src, aprs, sms);
+        first=0;
+    }
+    sqlite3_finalize(st);
+    appendf(&p,&left,"]");
+    http_send(200, "OK", "application/json", out, io); free(out);
+}
+
+static void api_stat(struct io* io){
+    char buf[65536]; int n = fetch_stat(buf, sizeof(buf));
+    if (n < 0) { http_send(502, "Bad Gateway", "text/plain", "no /STAT reply", io); return; }
+    http_send(200, "OK", "text/plain; charset=utf-8", buf, io);
+}
+
+static void handle_client(struct io* io){
+    char req[2048]; int n = io_recv(io, req, (int)sizeof(req)-1); if (n<=0){ io_close(io); return; } req[n]=0;
+    char method[8]={0}, path[1024]={0}; if (sscanf(req, "%7s %1023s", method, path)!=2){ http_404(io); io_close(io); return; }
+    if      (strncmp(path, "/api/log", 8)==0)      { api_log(io, path); io_close(io); return; }
+    else if (strncmp(path, "/api/active", 11)==0)  { api_active(io);   io_close(io); return; }
+    else if (strncmp(path, "/api/stat", 9)==0)    { api_stat(io);    io_close(io); return; }
+    if (serve_static(io, path)) { io_close(io); return; } http_404(io); io_close(io); return;
+}
+
+#ifdef _WIN32
+static DWORD WINAPI monitor_thread(LPVOID lp){ (void)lp;
+    WSADATA wsa; WSAStartup(MAKEWORD(2,2), &wsa);
+#else
+static void* monitor_thread(void* lp){ (void)lp;
+#endif
+    sock_t s = socket(AF_INET, SOCK_STREAM, 0); if (s==SOCK_INVALID) return 0;
+    g_listen = s; int one=1; setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (char*)&one, sizeof(one));
+    struct sockaddr_in a; memset(&a,0,sizeof(a)); a.sin_family=AF_INET; a.sin_port=htons((uint16_t)G.port);
+#ifdef _WIN32
+    InetPtonA(AF_INET, G.bind_ip, &a.sin_addr);
+#else
+    inet_pton(AF_INET, G.bind_ip, &a.sin_addr);
+#endif
+    if (bind(s, (struct sockaddr*)&a, sizeof(a))<0){ perror("monitor bind"); return 0; }
+    listen(s, 64);
+#ifdef _WIN32
+    InterlockedExchange(&g_run, 1);
+#else
+    g_run = 1;
+#endif
+    while (
+#ifdef _WIN32
+        InterlockedCompareExchange(&g_run, g_run, g_run)
+#else
+        g_run
+#endif
+    ){
+        struct sockaddr_in ca; socklen_t calen=sizeof(ca); sock_t c=accept(s,(struct sockaddr*)&ca,&calen);
+        if (c==SOCK_INVALID) continue; struct io io={c}; handle_client(&io);
+    }
+#ifdef _WIN32
+    return 0;
+#else
+    return NULL;
+#endif
+}
+
+void monitor_start(const MonitorConfig* cfg){
+    if (cfg){ if (cfg->bind_addr) strncpy(G.bind_ip, cfg->bind_addr, sizeof(G.bind_ip)-1); if (cfg->port>0) G.port=cfg->port; if (cfg->doc_root) strncpy(G.doc_root, cfg->doc_root, sizeof(G.doc_root)-1); }
+#ifdef _WIN32
+    if (InterlockedCompareExchange(&g_run, 0, 0)) return; g_thread = CreateThread(NULL,0,monitor_thread,NULL,0,NULL);
+#else
+    if (g_run) return; pthread_create(&g_thread,NULL,monitor_thread,NULL);
+#endif
+}
+
+void monitor_stop(void){
+#ifdef _WIN32
+    InterlockedExchange(&g_run, 0); if (g_listen!=SOCK_INVALID){ closesocket(g_listen); g_listen=SOCK_INVALID; }
+    if (g_thread){ WaitForSingleObject(g_thread, INFINITE); CloseHandle(g_thread); g_thread=NULL; }
+#else
+    g_run = 0; if (g_listen!=SOCK_INVALID){ close(g_listen); g_listen=SOCK_INVALID; }
+    if (g_thread) { pthread_join(g_thread,NULL); g_thread = 0; }
+#endif
+}
+#endif
+
 void obp_init() { }
 
 static void obp_fill_from_section(ob_peer& p, config_file& c, const char* sec, int fallback_local_port) {
@@ -2069,6 +2463,10 @@ static void obp_handle_rx_one(ob_peer& P) {
 				timer++;
 			}
 
+#ifdef HAVE_HTTPMODE
+			monitor_note_event((int)radioid, (int)tg, MON_SRC_OBP, (tg==g_aprs_tg ? 1:0), 0);
+#endif
+
 			obp_radioid_old = radioid;
 			obp_tg_old      = tg;
 			obp_slotid_old  = slotid;
@@ -2130,6 +2528,11 @@ void process_config_file()
 		g_keep_nodes_alive = c.getint("Homebrew", "KeepNodesAlive", g_keep_nodes_alive);
 		g_node_timeout = c.getint("Homebrew", "NodeTimeout", g_node_timeout);
 		g_relax_ip_change = c.getint("Homebrew", "RelaxIPChange", g_relax_ip_change);
+#ifdef HAVE_HTTPMODE
+		g_monitor_enabled = c.getint ("Monitor","Enable", g_monitor_enabled);
+		g_monitor_port = c.getint ("Monitor","Port", g_monitor_port);
+		strcpy (g_monitor_root, c.getstring ("Monitor","Root",g_monitor_root).c_str());
+#endif
 #ifdef USE_SQLITE3
 		strcpy (g_log, c.getstring ("File","Log",g_log).c_str());
 #endif
@@ -2184,6 +2587,14 @@ void process_config_file()
 	logmsg (LOG_YELLOW, 0, "Scanner TG    : %d\n", g_scanner_tg);
 	logmsg (LOG_YELLOW, 0, "Parrot TG     : %d\n", g_parrot_tg);
 	logmsg (LOG_YELLOW, 0, "APRS TG       : %d\n", g_aprs_tg);
+
+#ifdef HAVE_HTTPMODE
+	if (g_monitor_enabled) {
+		logmsg (LOG_GREEN, 0, "\n- Web Config\n\n");
+		logmsg (LOG_YELLOW, 0, "Port          : %d\n", g_monitor_port);
+		logmsg (LOG_YELLOW, 0, "Root          : %s\n", g_monitor_root);
+	}
+#endif
 
 	if (g_aprs.enabled) {
 		logmsg (LOG_GREEN, 0, "\n- Auth Config\n\n");
@@ -2344,6 +2755,13 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
+#ifdef HAVE_HTTPMODE
+	if (g_monitor_enabled) {
+		MonitorConfig mc = {"127.0.0.1", g_monitor_port, g_monitor_root};
+		monitor_start(&mc);
+	}
+#endif
+
 	pthread_t th;
 	pthread_create (&th, NULL, time_thread_proc, NULL);
 
@@ -2402,6 +2820,11 @@ int main(int argc, char **argv)
 			g_last_housekeeping_sec = g_sec;
 		}
 	}
+
+#ifdef HAVE_HTTPMODE
+	if (g_monitor_enabled)
+		monitor_stop ();
+#endif
 
 #ifdef USE_SQLITE3
 	sqlite3_close(db);

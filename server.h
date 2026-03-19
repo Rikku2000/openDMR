@@ -1,6 +1,8 @@
 #ifndef _SERVER_H
 #define _SERVER_H
 
+#define _CRT_SECURE_NO_WARNINGS
+
 #define DMR_VERSION 1
 #define DMR_RELEASE "0.1.0"
 #define OB_VERSION 0
@@ -24,6 +26,15 @@
 #pragma warning (disable : 4244)	
 #endif
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+#include <stdarg.h>
+#include <time.h>
+#include <errno.h>
+#include <ctype.h>
+
 #include "stdio.h"
 #include "stdlib.h"
 #include "time.h"
@@ -45,11 +56,10 @@ typedef dword DWORD;
 typedef char const *PCSTR;
 
 #ifdef WIN32
-
 #include "winsock2.h"
 #include "ws2tcpip.h"
 #include "process.h"
-#include "io.h"
+#include <io.h>
 
 #ifdef VS12
 #include "pthread.h"
@@ -63,12 +73,15 @@ typedef unsigned __int64 u64;
 	typedef HANDLE pthread_t;
 	typedef int pthread_attr_t;
 #endif
+typedef SOCKET sock_t;
 typedef unsigned (_stdcall *PTHREADPROC)(void *);
 typedef int socklen_t;
 int pthread_create (pthread_t *, const pthread_attr_t *, PTHREADPROC, void *);
 #define GetInetError() ((int)GetLastError())
 #define SetInetError(E) (SetLastError(E))
 #define CLOSESOCKET closesocket
+#define CLOSESOCK(s) closesocket(s)
+#define SOCK_INVALID INVALID_SOCKET
 
 #ifdef VS12
 #define eq(A,B) _stricmp((A),(B))==0
@@ -76,7 +89,9 @@ int pthread_create (pthread_t *, const pthread_attr_t *, PTHREADPROC, void *);
 #define eq(A,B) stricmp((A),(B))==0
 #endif
 
+#ifdef VS12
 #define snprintf(buf,len, format,...) _snprintf_s(buf, len,len, format, __VA_ARGS__)
+#endif
 #else
 
 #include <sys/socket.h>
@@ -93,6 +108,7 @@ int pthread_create (pthread_t *, const pthread_attr_t *, PTHREADPROC, void *);
 #include <sys/stat.h>
 #include <netdb.h>
 
+typedef int sock_t;
 typedef unsigned long long u64;
 
 dword GetTickCount();
@@ -101,7 +117,9 @@ dword GetTickCount();
 #define PTHREAD_PROC(NAME) void * NAME (void *threadcookie)
 #define GetInetError() ((int)errno)
 #define SetInetError(E) (errno = (E))
-#define CLOSESOCKET close	 
+#define CLOSESOCKET close
+#define CLOSESOCK(s) close(s)
+#define SOCK_INVALID (-1)
 
 #define Sleep(MS)	do { \
 						if(MS) \
@@ -547,6 +565,24 @@ void sms_append(struct sms_buf &sb, const byte *block51);
 void sms_emit_udp(dword radioid, dword dest, bool is_private, struct sms_buf &sb);
 void sms_housekeeping();
 bool sms_init_from_config(class config_file &c);
+#endif
+
+#ifdef HAVE_HTTPMODE
+typedef struct {
+	const char* bind_addr;
+	int port; 
+	const char* doc_root;
+} MonitorConfig;
+
+typedef enum {
+    MON_SRC_UNKNOWN = 0,
+    MON_SRC_LOCAL   = 1,
+    MON_SRC_OBP     = 2
+} MonSrc;
+
+void monitor_note_event(int radio, int tg, MonSrc src, int is_aprs, int is_sms);
+void monitor_start(const MonitorConfig* cfg);
+void monitor_stop(void);
 #endif
 
 #endif

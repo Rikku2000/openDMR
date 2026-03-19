@@ -4,7 +4,7 @@
 #include <windows.h> // include for version info constants
 
 
-A ICON "dmr.ico"
+A ICON "server.ico"
 
 //
 // TO CHANGE VERSION INFORMATION, EDIT PROJECT OPTIONS...
@@ -19,14 +19,14 @@ FILETYPE VFT_APP
     BLOCK "040904E4"
     {
       VALUE "CompanyName", ""
-      VALUE "FileVersion", "1.0.1.0"
+      VALUE "FileVersion", "0.0.2.0"
       VALUE "FileDescription", "Server"
       VALUE "InternalName", "Server"
       VALUE "LegalCopyright", ""
       VALUE "LegalTrademarks", ""
       VALUE "OriginalFilename", "server.exe"
       VALUE "ProductName", "Server"
-      VALUE "ProductVersion", "1.0.1.0"
+      VALUE "ProductVersion", "0.0.2.0"
     }
   }
   BLOCK "VarFileInfo"
