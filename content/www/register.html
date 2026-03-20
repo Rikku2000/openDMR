@@ -6,7 +6,7 @@
     <title>openDMR Dashboard</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
-  <body data-page="monitor">
+  <body data-page="register">
     <div class="app-shell">
       <header class="topbar">
         <div class="brand-wrap">
@@ -21,8 +21,8 @@
 
         <nav class="top-actions" aria-label="Primary navigation">
           <button onclick="location.href='index.html';" class="nav-btn" type="button">Dashboard</button>
-          <button onclick="location.href='monitor.html';" class="nav-btn is-current" type="button">Monitor</button>
-          <button onclick="location.href='register.html';" class="nav-btn is-hidden" data-auth-only type="button">Register</button>
+          <button onclick="location.href='monitor.html';" class="nav-btn" type="button">Monitor</button>
+          <button onclick="location.href='register.html';" class="nav-btn is-current" data-auth-only type="button">Register</button>
         </nav>
       </header>
 
@@ -57,16 +57,41 @@
           </div>
         </section>
 
-        <section class="monitor-grid">
-          <article class="panel-card monitor-stat-card">
+        <section class="panel-card wide-card">
+          <article class="panel-card form-card">
             <div class="panel-head">
               <div>
-                <div class="panel-title">Server Monitor</div>
-                <div class="panel-subtitle">Direct output from <code>/api/stat</code></div>
+                <div class="panel-title">New user registration</div>
+                <div class="panel-subtitle">Enter DMR-ID, callsign, name and password</div>
               </div>
-              <div class="panel-meta" id="stat-meta">No reply yet</div>
             </div>
-            <pre id="stat" class="terminal">Waiting for /STAT reply…</pre>
+
+            <form id="register-form" class="register-form">
+              <label class="field">
+                <span>DMR-ID</span>
+                <input id="dmrid" name="dmrid" type="number" inputmode="numeric" min="1" placeholder="" required />
+              </label>
+
+              <label class="field">
+                <span>Callsign</span>
+                <input id="callsign" name="callsign" type="text" placeholder="" maxlength="32" required />
+              </label>
+
+              <label class="field field-span-2">
+                <span>Name</span>
+                <input id="name" name="name" type="text" placeholder="" maxlength="96" required />
+              </label>
+
+              <label class="field field-span-2">
+                <span>Password</span>
+                <input id="password" name="password" type="password" placeholder="Choose a password" maxlength="127" required />
+              </label>
+
+              <div class="field-actions field-span-2">
+                <button id="register-submit" class="nav-btn submit-btn" type="submit">Save registration</button>
+                <div id="register-status" class="form-status">Ready.</div>
+              </div>
+            </form>
           </article>
         </section>
       </main>

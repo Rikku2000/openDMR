@@ -1,8 +1,11 @@
 CPP      = g++
+WINDRES  = windres.exe
 SRCS	 = $(wildcard *.cpp)
-OBJ      = $(SRCS:.cpp=.o) $(RES)
-LINKOBJ  = $(SRCS:.cpp=.o) $(RES)
-LIBS     = -L/usr/lib -lsqlite3 -lpthread -lcrypto -lssl
+RCFILE   = server_private.rc
+RESFILE  = server_private.res
+OBJ      = $(SRCS:.cpp=.o) $(RESFILE)
+LINKOBJ  = $(SRCS:.cpp=.o) $(RESFILE)
+LIBS     = -L/usr/lib -lsqlite3 -lpthread -lws2_32 -lcrypto -lssl
 CXXINCS  = -I/usr/include
 BIN      = server
 CXXFLAGS = -DSQLITE3 $(CXXINCS) -DUSE_SQLITE3 -DUSE_OPENSSL -DHAVE_APRS -DHAVE_SMS -DHAVE_HTTPMODE -fno-for-scope -Wreturn-type -O0 -Wno-write-strings
@@ -19,6 +22,9 @@ clean: clean-custom
 
 $(BIN): $(OBJ)
 	$(CPP) $(LINKOBJ) -o $(BIN) $(LIBS)
+
+$(RESFILE): $(RCFILE)
+	$(WINDRES) -i $(RCFILE) -O coff -o $(RESFILE)
 
 *.o: *.cpp
 	$(CPP) -c *.cpp -o *.o $(CXXFLAGS)

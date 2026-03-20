@@ -204,6 +204,7 @@ sms_settings g_sms = {0};
 
 int  g_auth_enabled = 0;
 char g_auth_file[260] = {0};
+char g_dmrids_file[260] = {0};
 int  g_auth_reload_secs = 0;
 int  g_auth_unknown_default = 0;
 
@@ -1647,6 +1648,206 @@ static void trim_spaces(char* s) {
     while (n>0 && (s[n-1]==' '||s[n-1]=='\t'||s[n-1]=='\r'||s[n-1]=='\n')) s[--n]=0;
 }
 
+static bool str_ieq_n(const char* a, const char* b, size_t n) {
+    for (size_t i=0; i<n; ++i) {
+        unsigned char ca = (unsigned char)a[i];
+        unsigned char cb = (unsigned char)b[i];
+        if (tolower(ca) != tolower(cb)) return false;
+    }
+    return true;
+}
+
+static std::string json_escape(const std::string& s) {
+    std::string out;
+    for (size_t i=0; i<s.size(); ++i) {
+        unsigned char c = (unsigned char)s[i];
+        switch (c) {
+            case '"': out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\b': out += "\\b"; break;
+            case '\f': out += "\\f"; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            default:
+                if (c < 32) {
+                    char tmp[8];
+                    snprintf(tmp, sizeof(tmp), "\\u%04x", (unsigned)c);
+                    out += tmp;
+                } else out += (char)c;
+        }
+    }
+    return out;
+}
+
+static std::string url_decode(const char* s) {
+    std::string out;
+    if (!s) return out;
+    for (; *s; ++s) {
+        if (*s == '+') out += ' ';
+        else if (*s == '%' && isxdigit((unsigned char)s[1]) && isxdigit((unsigned char)s[2])) {
+            char hex[3] = { s[1], s[2], 0 };
+            out += (char)strtol(hex, NULL, 16);
+            s += 2;
+        } else out += *s;
+    }
+    return out;
+}
+
+static std::string form_get_value(const char* body, const char* key) {
+    std::string out;
+    if (!body || !key || !*key) return out;
+    std::string want = key;
+    const char* p = body;
+    while (*p) {
+        const char* amp = strchr(p, '&');
+        size_t len = amp ? (size_t)(amp - p) : strlen(p);
+        std::string part(p, len);
+        size_t eq = part.find('=');
+        std::string k = url_decode(part.substr(0, eq).c_str());
+        std::string v = url_decode(eq == std::string::npos ? "" : part.substr(eq+1).c_str());
+        if (k == want) return v;
+        if (!amp) break;
+        p = amp + 1;
+    }
+    return out;
+}
+
+static void collapse_spaces(std::string& s) {
+    std::string out;
+    bool prev_space = true;
+    for (size_t i=0; i<s.size(); ++i) {
+        unsigned char c = (unsigned char)s[i];
+        if (c=='\r' || c=='\n' || c=='\t') c = ' ';
+        if (c == ' ') {
+            if (!prev_space) out += ' ';
+            prev_space = true;
+        } else {
+            out += (char)c;
+            prev_space = false;
+        }
+    }
+    while (!out.empty() && out[0]==' ') out.erase(0,1);
+    while (!out.empty() && out[out.size()-1]==' ') out.erase(out.size()-1,1);
+    s.swap(out);
+}
+
+static bool sanitize_callsign(std::string& s) {
+    collapse_spaces(s);
+    if (s.empty() || s.size() > 32) return false;
+    for (size_t i=0; i<s.size(); ++i) {
+        unsigned char c = (unsigned char)s[i];
+        if (c >= 'a' && c <= 'z') s[i] = (char)(c - 'a' + 'A');
+        c = (unsigned char)s[i];
+        if (!(isalnum(c) || c=='-' || c=='/' || c=='.')) return false;
+    }
+    return true;
+}
+
+static bool sanitize_name(std::string& s) {
+    collapse_spaces(s);
+    if (s.empty() || s.size() > 96) return false;
+    for (size_t i=0; i<s.size(); ++i) {
+        unsigned char c = (unsigned char)s[i];
+        if (c < 32 || c == ',') return false;
+    }
+    return true;
+}
+
+static bool validate_password(std::string& s) {
+    if (s.size() < 4 || s.size() >= MAX_PASSWORD_SIZE) return false;
+    for (size_t i=0; i<s.size(); ++i) {
+        unsigned char c = (unsigned char)s[i];
+        if (c < 33 || c > 126 || c == ',') return false;
+    }
+    return true;
+}
+
+static bool load_text_lines(const char* path, std::vector<std::string>& lines) {
+    lines.clear();
+    if (!path || !*path) return false;
+    FILE* f = fopen(path, "rb");
+    if (!f) return true;
+    char buf[1024];
+    while (fgets(buf, sizeof(buf), f)) {
+        size_t n = strlen(buf);
+        while (n>0 && (buf[n-1]=='\r' || buf[n-1]=='\n')) buf[--n] = 0;
+        lines.push_back(buf);
+    }
+    fclose(f);
+    return true;
+}
+
+static bool write_text_lines(const char* path, const std::vector<std::string>& lines, std::string& err) {
+    if (!path || !*path) { err = "Path not configured"; return false; }
+    std::string tmp = std::string(path) + ".tmp";
+    FILE* f = fopen(tmp.c_str(), "wb");
+    if (!f) { err = "Cannot write temporary file"; return false; }
+    for (size_t i=0; i<lines.size(); ++i) {
+        if (fputs(lines[i].c_str(), f) == EOF || fputc('\n', f) == EOF) {
+            fclose(f); remove(tmp.c_str()); err = "Write failed"; return false;
+        }
+    }
+    if (fclose(f) != 0) { remove(tmp.c_str()); err = "Cannot close temporary file"; return false; }
+    remove(path);
+    if (rename(tmp.c_str(), path) != 0) { remove(tmp.c_str()); err = "Cannot replace destination file"; return false; }
+    return true;
+}
+
+static bool parse_leading_id(const std::string& line, long* out_id) {
+    if (out_id) *out_id = 0;
+    char buf[1024];
+    strncpy(buf, line.c_str(), sizeof(buf)-1);
+    buf[sizeof(buf)-1] = 0;
+    trim_spaces(buf);
+    if (!buf[0] || buf[0] == '#') return false;
+    char* end = buf;
+    long id = strtol(buf, &end, 10);
+    if (end == buf || id <= 0) return false;
+    if (out_id) *out_id = id;
+    return true;
+}
+
+static bool upsert_auth_user_file(const char* path, dword dmrid, const char* pass, std::string& err) {
+    std::vector<std::string> lines, out;
+    if (!load_text_lines(path, lines)) { err = "Cannot read auth file"; return false; }
+    bool done = false;
+    char newline[512];
+    snprintf(newline, sizeof(newline), "%u,%s", (unsigned)dmrid, pass);
+    for (size_t i=0; i<lines.size(); ++i) {
+        char buf[1024];
+        strncpy(buf, lines[i].c_str(), sizeof(buf)-1);
+        buf[sizeof(buf)-1] = 0;
+        trim_spaces(buf);
+        if (!buf[0] || buf[0] == '#') { out.push_back(lines[i]); continue; }
+        char* comma = strchr(buf, ',');
+        if (!comma) { out.push_back(lines[i]); continue; }
+        *comma = 0;
+        trim_spaces(buf);
+        long id = strtol(buf, NULL, 10);
+        if (id == (long)dmrid) {
+            if (!done) { out.push_back(newline); done = true; }
+        } else out.push_back(lines[i]);
+    }
+    if (!done) out.push_back(newline);
+    return write_text_lines(path, out, err);
+}
+
+static bool upsert_dmrids_file(const char* path, dword dmrid, const char* callsign, const char* name, std::string& err) {
+    std::vector<std::string> lines, out;
+    if (!load_text_lines(path, lines)) { err = "Cannot read DMRIds file"; return false; }
+    bool done = false;
+    std::string newline = std::to_string((unsigned)dmrid) + " " + callsign + " " + name;
+    for (size_t i=0; i<lines.size(); ++i) {
+        long id = 0;
+        if (parse_leading_id(lines[i], &id) && id == (long)dmrid) {
+            if (!done) { out.push_back(newline); done = true; }
+        } else out.push_back(lines[i]);
+    }
+    if (!done) out.push_back(newline);
+    return write_text_lines(path, out, err);
+}
+
 static bool auth_load_now(const char* path) {
     if (!path || !*path) return false;
     FILE* f = fopen(path, "r");
@@ -1991,6 +2192,122 @@ static void mark_read(int radio, int* src, int* aprs, int* sms){
     if (sms)  *sms  = m->sms;
 }
 
+static void http_send_json(struct io* io, int code, const char* reason, const std::string& body) {
+    http_send(code, reason, "application/json; charset=utf-8", body.c_str(), io);
+}
+
+static int parse_content_length(const std::string& req, size_t hdr_end) {
+    size_t line_start = 0;
+    while (line_start < hdr_end) {
+        size_t line_end = req.find("\r\n", line_start);
+        if (line_end == std::string::npos || line_end > hdr_end) break;
+        size_t colon = req.find(':', line_start);
+        if (colon != std::string::npos && colon < line_end) {
+            std::string key = req.substr(line_start, colon - line_start);
+            std::string val = req.substr(colon + 1, line_end - colon - 1);
+            while (!val.empty() && (val[0] == ' ' || val[0] == '\t')) val.erase(0,1);
+            if (key.size() == 14 && str_ieq_n(key.c_str(), "Content-Length", 14)) return atoi(val.c_str());
+        }
+        line_start = line_end + 2;
+    }
+    return 0;
+}
+
+static bool read_http_request(struct io* io, std::string& out) {
+    out.clear();
+    char buf[2048];
+    size_t hdr_end = std::string::npos;
+    int content_len = 0;
+    while (out.size() < 16384) {
+        int n = io_recv(io, buf, (int)sizeof(buf));
+        if (n <= 0) break;
+        out.append(buf, (size_t)n);
+        if (hdr_end == std::string::npos) {
+            size_t pos = out.find("\r\n\r\n");
+            if (pos != std::string::npos) {
+                hdr_end = pos + 4;
+                content_len = parse_content_length(out, hdr_end);
+                if ((int)(out.size() - hdr_end) >= content_len) return true;
+                if (content_len <= 0) return true;
+            }
+        } else if ((int)(out.size() - hdr_end) >= content_len) return true;
+    }
+    return !out.empty();
+}
+
+static void api_config(struct io* io) {
+    std::string body = std::string("{\"authEnabled\":") + (g_auth_enabled ? "1" : "0")
+        + ",\"registrationEnabled\":" + (g_auth_enabled ? "1" : "0")
+        + ",\"dmrIdsFile\":\"" + json_escape(g_dmrids_file) + "\"}";
+    http_send_json(io, 200, "OK", body);
+}
+
+static void api_register(struct io* io, const char* method, const char* body) {
+    if (!g_auth_enabled) {
+        http_send_json(io, 403, "Forbidden", "{\"ok\":false,\"message\":\"Registration is disabled. Enable [Auth] -> Enable=1 first.\"}");
+        return;
+    }
+    if (!method || strcmp(method, "POST") != 0) {
+        http_send_json(io, 405, "Method Not Allowed", "{\"ok\":false,\"message\":\"POST required\"}");
+        return;
+    }
+
+    std::string dmrid_s  = form_get_value(body, "dmrid");
+    std::string callsign = form_get_value(body, "callsign");
+    std::string name     = form_get_value(body, "name");
+    std::string pass     = form_get_value(body, "password");
+
+    collapse_spaces(dmrid_s);
+    collapse_spaces(callsign);
+    collapse_spaces(name);
+
+    long dmrid = strtol(dmrid_s.c_str(), NULL, 10);
+    if (dmrid <= 0 || dmrid > 99999999L) {
+        http_send_json(io, 400, "Bad Request", "{\"ok\":false,\"message\":\"Please enter a valid DMR-ID.\"}");
+        return;
+    }
+    if (!sanitize_callsign(callsign)) {
+        http_send_json(io, 400, "Bad Request", "{\"ok\":false,\"message\":\"Callsign is invalid. Use letters, numbers, dash, slash or dot only.\"}");
+        return;
+    }
+    if (!sanitize_name(name)) {
+        http_send_json(io, 400, "Bad Request", "{\"ok\":false,\"message\":\"Name is invalid.\"}");
+        return;
+    }
+    if (!validate_password(pass)) {
+        http_send_json(io, 400, "Bad Request", "{\"ok\":false,\"message\":\"Password must be 4-127 visible characters with no spaces or commas.\"}");
+        return;
+    }
+    if (!g_auth_file[0]) {
+        http_send_json(io, 500, "Server Error", "{\"ok\":false,\"message\":\"Auth file is not configured.\"}");
+        return;
+    }
+    if (!g_dmrids_file[0]) {
+        http_send_json(io, 500, "Server Error", "{\"ok\":false,\"message\":\"DMRIds.dat path is not configured.\"}");
+        return;
+    }
+
+    std::string err;
+    if (!upsert_dmrids_file(g_dmrids_file, (dword)dmrid, callsign.c_str(), name.c_str(), err)) {
+        std::string msg = std::string("{\"ok\":false,\"message\":\"") + json_escape(err) + "\"}";
+        http_send_json(io, 500, "Server Error", msg);
+        return;
+    }
+    if (!upsert_auth_user_file(g_auth_file, (dword)dmrid, pass.c_str(), err)) {
+        std::string msg = std::string("{\"ok\":false,\"message\":\"") + json_escape(err) + "\"}";
+        http_send_json(io, 500, "Server Error", msg);
+        return;
+    }
+
+    auth_load_now(g_auth_file);
+    logmsg(LOG_GREEN, 0, "Web registration saved DMR-ID %u (%s %s)\n", (unsigned)dmrid, callsign.c_str(), name.c_str());
+
+    std::string msg = std::string("{\"ok\":true,\"message\":\"Registration saved for DMR-ID ")
+        + std::to_string((unsigned)dmrid) + "\",\"dmrid\":" + std::to_string((unsigned)dmrid)
+        + ",\"callsign\":\"" + json_escape(callsign) + "\",\"name\":\"" + json_escape(name) + "\"}";
+    http_send_json(io, 200, "OK", msg);
+}
+
 static void api_log(struct io* io, const char* path){
     if (!db){ http_send(500, "DB Closed", "application/json", "[]", io); return; }
 
@@ -2094,12 +2411,19 @@ static void api_stat(struct io* io){
 }
 
 static void handle_client(struct io* io){
-    char req[2048]; int n = io_recv(io, req, (int)sizeof(req)-1); if (n<=0){ io_close(io); return; } req[n]=0;
-    char method[8]={0}, path[1024]={0}; if (sscanf(req, "%7s %1023s", method, path)!=2){ http_404(io); io_close(io); return; }
-    if      (strncmp(path, "/api/log", 8)==0)      { api_log(io, path); io_close(io); return; }
-    else if (strncmp(path, "/api/active", 11)==0)  { api_active(io);   io_close(io); return; }
-    else if (strncmp(path, "/api/stat", 9)==0)    { api_stat(io);    io_close(io); return; }
-    if (serve_static(io, path)) { io_close(io); return; } http_404(io); io_close(io); return;
+    std::string req;
+    if (!read_http_request(io, req)) { io_close(io); return; }
+    char method[8]={0}, path[1024]={0};
+    if (sscanf(req.c_str(), "%7s %1023s", method, path)!=2){ http_404(io); io_close(io); return; }
+    size_t hdr_end = req.find("\r\n\r\n");
+    const char* body = (hdr_end == std::string::npos) ? "" : req.c_str() + hdr_end + 4;
+    if      (strncmp(path, "/api/log", 8)==0)       { api_log(io, path); io_close(io); return; }
+    else if (strncmp(path, "/api/active", 11)==0)   { api_active(io); io_close(io); return; }
+    else if (strncmp(path, "/api/stat", 9)==0)      { api_stat(io); io_close(io); return; }
+    else if (strncmp(path, "/api/config", 11)==0)   { api_config(io); io_close(io); return; }
+    else if (strncmp(path, "/api/register", 13)==0) { api_register(io, method, body); io_close(io); return; }
+    if (serve_static(io, path)) { io_close(io); return; }
+    http_404(io); io_close(io); return;
 }
 
 #ifdef _WIN32
@@ -2546,6 +2870,7 @@ void process_config_file()
 		g_auth_reload_secs = c.getint("Auth", "Reload", g_auth_reload_secs);
 		g_auth_unknown_default = c.getint("Auth", "UnknownPolicy", g_auth_unknown_default);
 		strcpy (g_auth_file, c.getstring ("File","Auth",g_auth_file).c_str());
+		strcpy (g_dmrids_file, c.getstring ("File","DMRIds",g_dmrids_file).c_str());
 
 		obp_load_extra_from_config(c);
 
@@ -2596,9 +2921,10 @@ void process_config_file()
 	}
 #endif
 
-	if (g_aprs.enabled) {
+	if (g_auth_enabled) {
 		logmsg (LOG_GREEN, 0, "\n- Auth Config\n\n");
 		logmsg (LOG_YELLOW, 0, "File          : %s\n", g_auth_file);
+		logmsg (LOG_YELLOW, 0, "DMRIds        : %s\n", g_dmrids_file);
 		logmsg (LOG_YELLOW, 0, "Reload        : %d\n", g_auth_reload_secs);
 		logmsg (LOG_YELLOW, 0, "Policy        : %s\n", g_auth_unknown_default ? "Default" : "Deny");
 	}
@@ -2685,6 +3011,8 @@ int main(int argc, char **argv)
 #endif
 	strcpy (g_talkgroup, "talkgroup.dat");
 	strcpy (g_banned, "banned.dat");
+	strcpy (g_auth_file, "auth_users.csv");
+	strcpy (g_dmrids_file, "DMRIds.dat");
 
 	process_config_file();
 #ifdef HAVE_APRS

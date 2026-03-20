@@ -14,7 +14,7 @@
             <span class="brand-mark">DMR</span>
             <span>
               <strong>openDMR</strong>
-              <small>Network activity dashboard</small>
+              <small>Digital Mobile Radio</small>
             </span>
           </button>
         </div>
@@ -22,13 +22,13 @@
         <nav class="top-actions" aria-label="Primary navigation">
           <button onclick="location.href='index.html';" class="nav-btn is-current" type="button">Dashboard</button>
           <button onclick="location.href='monitor.html';" class="nav-btn" type="button">Monitor</button>
+          <button onclick="location.href='register.html';" class="nav-btn is-hidden" data-auth-only type="button">Register</button>
         </nav>
       </header>
 
       <main class="page">
         <section class="hero-card">
           <div>
-            <div class="eyebrow">Live DMR operations</div>
             <h1>Modern network overview for active calls, talkgroups, and system health.</h1>
             <p class="hero-copy">
               
@@ -36,6 +36,8 @@
             <div class="hero-chips">
               <span class="chip" id="hero-status">Waiting for live data</span>
               <span class="chip chip-soft" id="hero-summary">No active transmissions yet</span>
+              <span class="chip" id="monitor-status">Connecting</span>
+              <span class="chip chip-soft" id="monitor-updated">Waiting for data</span>
             </div>
           </div>
 

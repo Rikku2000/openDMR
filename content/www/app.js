@@ -1,6 +1,7 @@
 const THEME_KEY = 'dmr.theme';
 const root = document.documentElement;
 const page = document.body.dataset.page || 'dashboard';
+let runtimeConfig = { authEnabled: false, registrationEnabled: false, dmrIdsFile: '' };
 
 function applyTheme() {
   const theme = localStorage.getItem(THEME_KEY) || 'dark';
@@ -34,6 +35,109 @@ async function fetchText(url) {
 function setText(id, value) {
   const el = document.getElementById(id);
   if (el) el.textContent = value;
+}
+
+function setHidden(selector, hidden) {
+  document.querySelectorAll(selector).forEach((el) => {
+    el.classList.toggle('is-hidden', hidden);
+  });
+}
+
+function setChipTone(id, tone) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.className = 'chip';
+  if (tone === 'soft') el.classList.add('chip-soft');
+  if (tone === 'warn') el.classList.add('chip-warn');
+  if (tone === 'bad') el.classList.add('chip-bad');
+}
+
+async function loadRuntimeConfig() {
+  try {
+    const config = await fetchJSON('/api/config');
+    runtimeConfig = {
+      authEnabled: !!config.authEnabled,
+      registrationEnabled: !!config.registrationEnabled,
+      dmrIdsFile: config.dmrIdsFile || ''
+    };
+  } catch (error) {
+    console.error('config:', error);
+  }
+
+  setHidden('[data-auth-only]', !runtimeConfig.registrationEnabled);
+
+  if (page === 'register') {
+    setText('register-auth-state', runtimeConfig.registrationEnabled ? 'Registration enabled' : 'Registration disabled');
+    setText('register-storage', runtimeConfig.dmrIdsFile || 'DMRIds.dat');
+    setChipTone('register-auth-state', runtimeConfig.registrationEnabled ? '' : 'warn');
+    const form = document.getElementById('register-form');
+    if (form) {
+      Array.from(form.elements).forEach((el) => {
+        if ('disabled' in el) el.disabled = !runtimeConfig.registrationEnabled;
+      });
+    }
+    const hint = document.getElementById('register-hint');
+    if (hint) {
+      hint.textContent = runtimeConfig.registrationEnabled
+        ? 'New users are saved into auth_users.csv and DMRIds.dat.'
+        : 'Set [Auth] Enable=1 in dmr.conf to allow user registration.';
+    }
+  }
+}
+
+function setRegisterStatus(message, tone = 'soft') {
+  const box = document.getElementById('register-status');
+  if (!box) return;
+  box.textContent = message;
+  box.className = 'form-status';
+  if (tone === 'ok') box.classList.add('is-ok');
+  if (tone === 'bad') box.classList.add('is-bad');
+  if (tone === 'warn') box.classList.add('is-warn');
+}
+
+function initRegistrationForm() {
+  const form = document.getElementById('register-form');
+  if (!form) return;
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+
+    if (!runtimeConfig.registrationEnabled) {
+      setRegisterStatus('Registration is disabled in dmr.conf.', 'warn');
+      return;
+    }
+
+    const submitBtn = document.getElementById('register-submit');
+    const data = new FormData(form);
+    const body = new URLSearchParams();
+    for (const [key, value] of data.entries()) body.append(key, String(value));
+
+    if (submitBtn) submitBtn.disabled = true;
+    setRegisterStatus('Saving registration…');
+
+    try {
+      const response = await fetch('/api/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        cache: 'no-store',
+        body: body.toString()
+      });
+
+      const payload = await response.json().catch(() => ({ ok: false, message: `HTTP ${response.status}` }));
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.message || `HTTP ${response.status}`);
+      }
+
+      setRegisterStatus(payload.message || 'Registration saved.', 'ok');
+      const pw = document.getElementById('password');
+      if (pw) pw.value = '';
+    } catch (error) {
+      console.error('register:', error);
+      setRegisterStatus(error.message || 'Registration failed.', 'bad');
+    } finally {
+      if (submitBtn) submitBtn.disabled = false;
+    }
+  });
 }
 
 function td(value, className = '') {
@@ -287,11 +391,17 @@ async function tick() {
   if (page === 'monitor') {
     jobs.push(renderStat());
   }
+  if (page === 'register') {
+    jobs.push(renderActive(), renderLog());
+    jobs.push(renderStat());
+  }
 
   await Promise.allSettled(jobs);
 }
 
 initThemeToggle();
+initRegistrationForm();
+loadRuntimeConfig();
 renderClock();
 tick();
 setInterval(renderClock, 1000);
