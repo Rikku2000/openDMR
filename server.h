@@ -46,13 +46,16 @@
 #include <vector>
 #include <array>
 #include <map>
+#include <cstdint>
+#include <cstdint>
 
-typedef unsigned char byte;
-typedef byte BYTE;
-typedef unsigned short word;
-typedef word WORD;
-typedef unsigned long dword;
-typedef dword DWORD;
+typedef uint8_t  byte;
+typedef uint8_t  BYTE;
+typedef uint16_t word;
+typedef uint16_t WORD;
+typedef uint32_t dword;
+typedef uint32_t DWORD;
+
 typedef char const *PCSTR;
 
 #ifdef WIN32

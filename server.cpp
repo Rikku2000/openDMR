@@ -1469,9 +1469,9 @@ void handle_rx (sockaddr_in &addr, byte *pk, int pksize)
 			n->addr = addr;
 
 		n->salt = ((dword)rand() << 16) ^ g_tick;
-		memcpy (pk, "RPTACK", 6);
-		*(dword*)(pk + 6) = n->salt;
-		sendpacket (addr, pk, 10);
+		memcpy(pk, "RPTACK", 6);
+		set4(pk + 6, n->salt);
+		sendpacket(addr, pk, 10);
 	}
 	else if (pksize == 40 && memcmp(pk, "RPTK", 4) == 0) {
 		dword nodeid = get4(pk + 4);
@@ -1500,10 +1500,10 @@ void handle_rx (sockaddr_in &addr, byte *pk, int pksize)
 		bool ok = false;
 		if (permitted && pass && pass[0]) {
 			byte localhash[32];
-			char temp[MAX_PASSWORD_SIZE + sizeof(n->salt)];
-			*(dword*)temp = n->salt;
-			strcpy(temp + sizeof(n->salt), pass);
-			make_sha256_hash(temp, sizeof(n->salt) + (int)strlen(pass), localhash, NULL, 0);
+			byte temp[MAX_PASSWORD_SIZE + 4];
+			set4(temp, n->salt);
+			strcpy((char*)temp + 4, pass);
+			make_sha256_hash(temp, 4 + (int)strlen(pass), localhash, NULL, 0);
 			ok = (memcmp(localhash, remotehash, 32) == 0);
 		} else {
 			ok = false;
@@ -2694,7 +2694,7 @@ void obp_forward_dmrd(const byte* pk, int sz, int origin_tag) {
 
         if (P.enhanced) {
             if (obp_append_hmac_dmrd(block51, P.pass) != 0) {
-                log(NULL, "OpenBridge: HMAC unavailable (build w/ USE_OPENSSL) Â— not sending");
+                log(NULL, "OpenBridge: HMAC unavailable (build w/ USE_OPENSSL) — not sending");
                 return;
             }
         }
