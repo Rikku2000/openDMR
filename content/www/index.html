@@ -1,72 +1,163 @@
 <!doctype html>
 <html lang="en">
-	<head>
-		<meta charset="utf-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1" />
-		<title>openDMR</title>
-		<link rel="stylesheet" href="styles.css" />
-	</head>
-	<body>
-		<header class="header">
-			<button id="theme" class="btn"><h1>openDMR</h1></button>
-			<div class="actions">
-				<button onclick="location.href='index.html';" class="btn">Dashboard</button>
-				<button onclick="location.href='monitor.html';" class="btn">Monitor</button>
-			</div>
-		</header>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>openDMR Dashboard</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body data-page="dashboard">
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand-wrap">
+          <button id="theme" class="brand-btn" type="button" aria-label="Toggle theme">
+            <span class="brand-mark">DMR</span>
+            <span>
+              <strong>openDMR</strong>
+              <small>Network activity dashboard</small>
+            </span>
+          </button>
+        </div>
 
-		<main class="container">
-			<section class="card">
-				<div class="card-head">
-					<h3>Currently Active</h3>
-				</div>
-				<div class="table-wrap">
-					<table class="table" id="tab-active" aria-label="Active calls">
-						<thead>
-							<tr>
-								<th style="width: 25%;">Date</th>
-								<th style="width: 20%;">Radio</th>
-								<th style="width: 5%;">Badges</th>
-								<th style="width: 15%;">TG</th>
-								<th style="width: 10%;">Slot</th>
-								<th style="width: 15%;">Node</th>
-								<th style="width: 10%;">Secs</th>
-							</tr>
-						</thead>
-						<tbody>
-						</tbody>
-					</table>
-				</div>
-			</section>
+        <nav class="top-actions" aria-label="Primary navigation">
+          <button onclick="location.href='index.html';" class="nav-btn is-current" type="button">Dashboard</button>
+          <button onclick="location.href='monitor.html';" class="nav-btn" type="button">Monitor</button>
+        </nav>
+      </header>
 
-			<section class="card">
-				<div class="card-head">
-					<h3>Recent PTT / Talkgroups</h3>
-				</div>
-				<div class="table-wrap">
-					<table class="table" id="tab-log" aria-label="Recent PTT">
-						<thead>
-							<tr>
-								<th style="width: 5%;">ID</th>
-								<th style="width: 20%;">Date</th>
-								<th style="width: 15%;">Radio</th>
-								<th style="width: 5%;">Badges</th>
-								<th style="width: 15%;">TG</th>
-								<th style="width: 5%;">Slot</th>
-								<th style="width: 15%;">Node</th>
-								<th style="width: 10%;">Secs</th>
-								<th style="width: 5%;">Active</th>
-								<th style="width: 5%;">Online</th>
-								<th style="width: 5%;">Conn</th>
-							</tr>
-						</thead>
-						<tbody>
-						</tbody>
-					</table>
-				</div>
-			</section>
-		</main>
+      <main class="page">
+        <section class="hero-card">
+          <div>
+            <div class="eyebrow">Live DMR operations</div>
+            <h1>Modern network overview for active calls, talkgroups, and system health.</h1>
+            <p class="hero-copy">
+              
+            </p>
+            <div class="hero-chips">
+              <span class="chip" id="hero-status">Waiting for live data</span>
+              <span class="chip chip-soft" id="hero-summary">No active transmissions yet</span>
+            </div>
+          </div>
 
-		<script type="module" src="app.js"></script>
-	</body>
+          <div class="hero-side">
+            <div class="clock-card">
+              <div class="clock-label">Local time</div>
+              <div class="clock-value" id="clock-time">--:--:--</div>
+              <div class="clock-date" id="clock-date">Loading date</div>
+            </div>
+            <div class="pulse-card">
+              <div class="pulse-dot"></div>
+              <div>
+                <div class="pulse-title">Auto refresh</div>
+                <div class="pulse-sub">Every 3 seconds</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="metric-grid" aria-label="Key metrics">
+          <article class="metric-card accent">
+            <div class="metric-label">Active calls</div>
+            <div class="metric-value" id="metric-active">0</div>
+            <div class="metric-sub" id="metric-active-sub">No live activity</div>
+          </article>
+
+          <article class="metric-card">
+            <div class="metric-label">Recent talkgroups</div>
+            <div class="metric-value" id="metric-talkgroups">0</div>
+            <div class="metric-sub" id="metric-talkgroups-sub">Across latest 20 records</div>
+          </article>
+
+          <article class="metric-card">
+            <div class="metric-label">Online radios</div>
+            <div class="metric-value" id="metric-online">0</div>
+            <div class="metric-sub" id="metric-online-sub">Seen in recent activity</div>
+          </article>
+
+          <article class="metric-card">
+            <div class="metric-label">Last update</div>
+            <div class="metric-value metric-value-small" id="metric-refresh">--:--:--</div>
+            <div class="metric-sub" id="metric-refresh-sub">Waiting for first sync</div>
+          </article>
+        </section>
+
+        <section class="content-grid">
+          <article class="panel-card panel-span-2" id="active-panel">
+            <div class="panel-head">
+              <div>
+                <div class="panel-title">Currently Active</div>
+                <div class="panel-subtitle">Live transmissions on the network right now</div>
+              </div>
+              <div class="panel-meta" id="active-meta">No active calls</div>
+            </div>
+
+            <div class="table-wrap">
+              <table class="table" id="tab-active" aria-label="Active calls">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Radio</th>
+                    <th>Mode</th>
+                    <th>TG</th>
+                    <th>Slot</th>
+                    <th>Node</th>
+                    <th>Secs</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="panel-card">
+            <div class="panel-head">
+              <div>
+                <div class="panel-title">Traffic snapshot</div>
+                <div class="panel-subtitle">Quick breakdown from the recent log</div>
+              </div>
+            </div>
+            <div class="summary-stack" id="activity-summary">
+              <div class="summary-row">
+                <span>No log data yet</span>
+                <strong>—</strong>
+              </div>
+            </div>
+          </article>
+        </section>
+
+        <section class="panel-card wide-card">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Recent PTT / Talkgroups</div>
+              <div class="panel-subtitle">Latest 20 records from your activity log</div>
+            </div>
+            <div class="panel-meta" id="log-meta">Awaiting log sync</div>
+          </div>
+
+          <div class="table-wrap">
+            <table class="table" id="tab-log" aria-label="Recent PTT">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Date</th>
+                  <th>Radio</th>
+                  <th>Mode</th>
+                  <th>TG</th>
+                  <th>Slot</th>
+                  <th>Node</th>
+                  <th>Secs</th>
+                  <th>Active</th>
+                  <th>Online</th>
+                  <th>Conn</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script type="module" src="app.js"></script>
+  </body>
 </html>

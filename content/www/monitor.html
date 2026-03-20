@@ -1,29 +1,68 @@
 <!doctype html>
 <html lang="en">
-	<head>
-		<meta charset="utf-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1" />
-		<title>openDMR</title>
-		<link rel="stylesheet" href="styles.css" />
-	</head>
-	<body>
-		<header class="header">
-			<button id="theme" class="btn"><h1>openDMR</h1></button>
-			<div class="actions">
-				<button onclick="location.href='index.html';" class="btn">Dashboard</button>
-				<button onclick="location.href='monitor.html';" class="btn">Monitor</button>
-			</div>
-		</header>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>openDMR Monitor</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body data-page="monitor">
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand-wrap">
+          <button id="theme" class="brand-btn" type="button" aria-label="Toggle theme">
+            <span class="brand-mark">DMR</span>
+            <span>
+              <strong>openDMR</strong>
+              <small>Server monitor</small>
+            </span>
+          </button>
+        </div>
 
-		<main class="container">
-			<section class="card">
-				<div class="card-head">
-					<h3>Server Monitor</h3>
-				</div>
-				<pre id="stat" class="pre"></pre>
-			</section>
-		</main>
+        <nav class="top-actions" aria-label="Primary navigation">
+          <button onclick="location.href='index.html';" class="nav-btn" type="button">Dashboard</button>
+          <button onclick="location.href='monitor.html';" class="nav-btn is-current" type="button">Monitor</button>
+        </nav>
+      </header>
 
-		<script type="module" src="app.js"></script>
-	</body>
+      <main class="page monitor-page">
+        <section class="hero-card monitor-hero">
+          <div>
+            <div class="eyebrow">System monitor</div>
+            <h1>Real-time server status with a cleaner operator view.</h1>
+            <p class="hero-copy">
+              
+            </p>
+            <div class="hero-chips">
+              <span class="chip" id="monitor-status">Connecting</span>
+              <span class="chip chip-soft" id="monitor-updated">Waiting for data</span>
+            </div>
+          </div>
+
+          <div class="hero-side">
+            <div class="clock-card">
+              <div class="clock-label">Local time</div>
+              <div class="clock-value" id="clock-time">--:--:--</div>
+              <div class="clock-date" id="clock-date">Loading date</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="monitor-grid">
+          <article class="panel-card monitor-stat-card">
+            <div class="panel-head">
+              <div>
+                <div class="panel-title">Server Monitor</div>
+                <div class="panel-subtitle">Direct output from <code>/api/stat</code></div>
+              </div>
+              <div class="panel-meta" id="stat-meta">No reply yet</div>
+            </div>
+            <pre id="stat" class="terminal">Waiting for /STAT reply…</pre>
+          </article>
+        </section>
+      </main>
+    </div>
+
+    <script type="module" src="app.js"></script>
+  </body>
 </html>
