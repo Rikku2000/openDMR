@@ -2694,7 +2694,7 @@ void obp_forward_dmrd(const byte* pk, int sz, int origin_tag) {
 
         if (P.enhanced) {
             if (obp_append_hmac_dmrd(block51, P.pass) != 0) {
-                log(NULL, "OpenBridge: HMAC unavailable (build w/ USE_OPENSSL) — not sending");
+                log(NULL, "OpenBridge: HMAC unavailable (build w/ USE_OPENSSL) Â— not sending");
                 return;
             }
         }
@@ -3085,7 +3085,7 @@ int main(int argc, char **argv)
 
 #ifdef HAVE_HTTPMODE
 	if (g_monitor_enabled) {
-		MonitorConfig mc = {"127.0.0.1", g_monitor_port, g_monitor_root};
+		MonitorConfig mc = {"0.0.0.0", g_monitor_port, g_monitor_root};
 		monitor_start(&mc);
 	}
 #endif
