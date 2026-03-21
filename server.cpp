@@ -28,7 +28,7 @@ dword nodeid_old;
 
 #ifdef HAVE_HTTPMODE
 int g_monitor_enabled = 1;
-int g_monitor_port = 62080;
+int g_monitor_port = 8080;
 char g_monitor_root[256] = "www";
 
 typedef struct {
@@ -1808,44 +1808,49 @@ static bool parse_leading_id(const std::string& line, long* out_id) {
     return true;
 }
 
-static bool upsert_auth_user_file(const char* path, dword dmrid, const char* pass, std::string& err) {
-    std::vector<std::string> lines, out;
+static bool dmrid_exists_in_auth_file(const char* path, dword dmrid, std::string& err) {
+    std::vector<std::string> lines;
     if (!load_text_lines(path, lines)) { err = "Cannot read auth file"; return false; }
-    bool done = false;
-    char newline[512];
-    snprintf(newline, sizeof(newline), "%u,%s", (unsigned)dmrid, pass);
     for (size_t i=0; i<lines.size(); ++i) {
         char buf[1024];
         strncpy(buf, lines[i].c_str(), sizeof(buf)-1);
         buf[sizeof(buf)-1] = 0;
         trim_spaces(buf);
-        if (!buf[0] || buf[0] == '#') { out.push_back(lines[i]); continue; }
+        if (!buf[0] || buf[0] == '#') continue;
         char* comma = strchr(buf, ',');
-        if (!comma) { out.push_back(lines[i]); continue; }
+        if (!comma) continue;
         *comma = 0;
         trim_spaces(buf);
         long id = strtol(buf, NULL, 10);
-        if (id == (long)dmrid) {
-            if (!done) { out.push_back(newline); done = true; }
-        } else out.push_back(lines[i]);
+        if (id == (long)dmrid) return true;
     }
-    if (!done) out.push_back(newline);
-    return write_text_lines(path, out, err);
+    return false;
 }
 
-static bool upsert_dmrids_file(const char* path, dword dmrid, const char* callsign, const char* name, std::string& err) {
-    std::vector<std::string> lines, out;
+static bool dmrid_exists_in_dmrids_file(const char* path, dword dmrid, std::string& err) {
+    std::vector<std::string> lines;
     if (!load_text_lines(path, lines)) { err = "Cannot read DMRIds file"; return false; }
-    bool done = false;
-    std::string newline = std::to_string((unsigned)dmrid) + " " + callsign + " " + name;
     for (size_t i=0; i<lines.size(); ++i) {
         long id = 0;
-        if (parse_leading_id(lines[i], &id) && id == (long)dmrid) {
-            if (!done) { out.push_back(newline); done = true; }
-        } else out.push_back(lines[i]);
+        if (parse_leading_id(lines[i], &id) && id == (long)dmrid) return true;
     }
-    if (!done) out.push_back(newline);
-    return write_text_lines(path, out, err);
+    return false;
+}
+
+static bool append_auth_user_file(const char* path, dword dmrid, const char* pass, std::string& err) {
+    std::vector<std::string> lines;
+    if (!load_text_lines(path, lines)) { err = "Cannot read auth file"; return false; }
+    char newline[512];
+    snprintf(newline, sizeof(newline), "%u,%s", (unsigned)dmrid, pass);
+    lines.push_back(newline);
+    return write_text_lines(path, lines, err);
+}
+
+static bool append_dmrids_file(const char* path, dword dmrid, const char* callsign, const char* name, std::string& err) {
+    std::vector<std::string> lines;
+    if (!load_text_lines(path, lines)) { err = "Cannot read DMRIds file"; return false; }
+    lines.push_back(std::to_string((unsigned)dmrid) + " " + callsign + " " + name);
+    return write_text_lines(path, lines, err);
 }
 
 static bool auth_load_now(const char* path) {
@@ -2286,14 +2291,37 @@ static void api_register(struct io* io, const char* method, const char* body) {
         http_send_json(io, 500, "Server Error", "{\"ok\":false,\"message\":\"DMRIds.dat path is not configured.\"}");
         return;
     }
-
     std::string err;
-    if (!upsert_dmrids_file(g_dmrids_file, (dword)dmrid, callsign.c_str(), name.c_str(), err)) {
+    bool exists_in_auth = dmrid_exists_in_auth_file(g_auth_file, (dword)dmrid, err);
+    if (!err.empty()) {
         std::string msg = std::string("{\"ok\":false,\"message\":\"") + json_escape(err) + "\"}";
         http_send_json(io, 500, "Server Error", msg);
         return;
     }
-    if (!upsert_auth_user_file(g_auth_file, (dword)dmrid, pass.c_str(), err)) {
+
+    bool exists_in_dmrids = dmrid_exists_in_dmrids_file(g_dmrids_file, (dword)dmrid, err);
+    if (!err.empty()) {
+        std::string msg = std::string("{\"ok\":false,\"message\":\"") + json_escape(err) + "\"}";
+        http_send_json(io, 500, "Server Error", msg);
+        return;
+    }
+
+    if (exists_in_auth || exists_in_dmrids) {
+        std::string where;
+        if (exists_in_auth) where += "auth_users.csv";
+        if (exists_in_auth && exists_in_dmrids) where += " and ";
+        if (exists_in_dmrids) where += "DMRIds.dat";
+        std::string msg = std::string("{\"ok\":false,\"message\":\"DMR-ID already exists!\"}");
+        http_send_json(io, 409, "Conflict", msg);
+        return;
+    }
+
+    if (!append_dmrids_file(g_dmrids_file, (dword)dmrid, callsign.c_str(), name.c_str(), err)) {
+        std::string msg = std::string("{\"ok\":false,\"message\":\"") + json_escape(err) + "\"}";
+        http_send_json(io, 500, "Server Error", msg);
+        return;
+    }
+    if (!append_auth_user_file(g_auth_file, (dword)dmrid, pass.c_str(), err)) {
         std::string msg = std::string("{\"ok\":false,\"message\":\"") + json_escape(err) + "\"}";
         http_send_json(io, 500, "Server Error", msg);
         return;
@@ -3085,7 +3113,7 @@ int main(int argc, char **argv)
 
 #ifdef HAVE_HTTPMODE
 	if (g_monitor_enabled) {
-		MonitorConfig mc = {"0.0.0.0", g_monitor_port, g_monitor_root};
+		MonitorConfig mc = {g_host, g_monitor_port, g_monitor_root};
 		monitor_start(&mc);
 	}
 #endif
