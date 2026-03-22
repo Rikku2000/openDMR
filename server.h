@@ -49,12 +49,21 @@
 #include <cstdint>
 #include <cstdint>
 
+#ifdef WIN32
+typedef unsigned char byte;
+typedef byte BYTE;
+typedef unsigned short word;
+typedef word WORD;
+typedef unsigned long dword;
+typedef dword DWORD;
+#else
 typedef uint8_t  byte;
 typedef uint8_t  BYTE;
 typedef uint16_t word;
 typedef uint16_t WORD;
 typedef uint32_t dword;
 typedef uint32_t DWORD;
+#endif
 
 typedef char const *PCSTR;
 

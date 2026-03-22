@@ -560,3 +560,77 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
   .field-actions { align-items: stretch; }
   .submit-btn { width: 100%; }
 }
+
+.auth-slot {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.profile-summary {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.compact-form {
+  grid-template-columns: 1fr;
+}
+
+.compact-form .field-span-2 {
+  grid-column: auto;
+}
+
+.auth-actions-row {
+  align-items: stretch;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(4, 10, 18, 0.68);
+  backdrop-filter: blur(12px);
+}
+
+.modal-card {
+  width: min(520px, 100%);
+  padding: 18px;
+  border-radius: 26px;
+  border: 1px solid var(--line);
+  background: linear-gradient(180deg, var(--surface-strong), var(--surface));
+  box-shadow: var(--shadow);
+}
+
+.modal-head {
+  margin-bottom: 10px;
+}
+
+.modal-close {
+  min-width: 96px;
+}
+
+body.modal-open {
+  overflow: hidden;
+}
+
+@media (max-width: 820px) {
+  .auth-slot {
+    width: 100%;
+  }
+
+  .auth-slot .nav-btn,
+  .auth-slot .chip {
+    flex: 1;
+    justify-content: center;
+  }
+
+  .modal-card {
+    padding: 16px;
+    border-radius: 22px;
+  }
+}

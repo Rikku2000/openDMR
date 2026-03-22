@@ -211,6 +211,14 @@ int  g_auth_unknown_default = 0;
 static std::map<dword, std::string> g_auth_map;
 static dword g_auth_last_load_sec = 0;
 
+struct WebSession {
+    dword dmrid;
+    unsigned expires;
+};
+
+static std::map<std::string, WebSession> g_web_sessions;
+static const unsigned WEB_SESSION_TTL = 24u * 60u * 60u;
+
 #ifdef USE_SQLITE3
 sqlite3 *db;
 char *zErrMsg = 0;
@@ -1808,6 +1816,37 @@ static bool parse_leading_id(const std::string& line, long* out_id) {
     return true;
 }
 
+static bool parse_dmrids_line(const std::string& line, long* out_id, std::string* out_callsign, std::string* out_name) {
+    if (out_id) *out_id = 0;
+    if (out_callsign) out_callsign->clear();
+    if (out_name) out_name->clear();
+
+    char buf[1024];
+    strncpy(buf, line.c_str(), sizeof(buf)-1);
+    buf[sizeof(buf)-1] = 0;
+    char* p = buf;
+    trim_spaces(p);
+    if (!*p || *p == '#') return false;
+
+    char* end = p;
+    long id = strtol(p, &end, 10);
+    if (end == p || id <= 0) return false;
+    while (*end == ' ' || *end == '	') ++end;
+
+    char callsign[128] = {0};
+    int ci = 0;
+    while (*end && *end != ' ' && *end != '	' && ci < (int)sizeof(callsign)-1) callsign[ci++] = *end++;
+    callsign[ci] = 0;
+    while (*end == ' ' || *end == '	') ++end;
+
+    std::string name = end;
+    collapse_spaces(name);
+    if (out_id) *out_id = id;
+    if (out_callsign) *out_callsign = callsign;
+    if (out_name) *out_name = name;
+    return true;
+}
+
 static bool dmrid_exists_in_auth_file(const char* path, dword dmrid, std::string& err) {
     std::vector<std::string> lines;
     if (!load_text_lines(path, lines)) { err = "Cannot read auth file"; return false; }
@@ -1835,6 +1874,83 @@ static bool dmrid_exists_in_dmrids_file(const char* path, dword dmrid, std::stri
         if (parse_leading_id(lines[i], &id) && id == (long)dmrid) return true;
     }
     return false;
+}
+
+static bool auth_verify_password(dword dmrid, const std::string& password) {
+    const char* saved = auth_lookup_pass(dmrid);
+    return saved && password == saved;
+}
+
+static bool auth_update_password_file(const char* path, dword dmrid, const char* pass, std::string& err) {
+    std::vector<std::string> lines;
+    if (!load_text_lines(path, lines)) { err = "Cannot read auth file"; return false; }
+
+    bool found = false;
+    for (size_t i=0; i<lines.size(); ++i) {
+        char buf[1024];
+        strncpy(buf, lines[i].c_str(), sizeof(buf)-1);
+        buf[sizeof(buf)-1] = 0;
+        trim_spaces(buf);
+        if (!buf[0] || buf[0] == '#') continue;
+        char* comma = strchr(buf, ',');
+        if (!comma) continue;
+        *comma = 0;
+        trim_spaces(buf);
+        long id = strtol(buf, NULL, 10);
+        if (id == (long)dmrid) {
+            char newline[512];
+            snprintf(newline, sizeof(newline), "%u,%s", (unsigned)dmrid, pass);
+            lines[i] = newline;
+            found = true;
+            break;
+        }
+    }
+
+    if (!found) { err = "DMR-ID not found in auth_users.csv"; return false; }
+    return write_text_lines(path, lines, err);
+}
+
+static bool dmrids_read_profile(const char* path, dword dmrid, std::string& callsign, std::string& name, std::string& err) {
+    callsign.clear();
+    name.clear();
+    std::vector<std::string> lines;
+    if (!load_text_lines(path, lines)) { err = "Cannot read DMRIds file"; return false; }
+    for (size_t i=0; i<lines.size(); ++i) {
+        long id = 0;
+        std::string cs, nm;
+        if (!parse_dmrids_line(lines[i], &id, &cs, &nm)) continue;
+        if (id == (long)dmrid) {
+            callsign = cs;
+            name = nm;
+            return true;
+        }
+    }
+    return true;
+}
+
+static bool dmrids_update_name_file(const char* path, dword dmrid, const char* name, std::string& callsign_inout, std::string& err) {
+    std::vector<std::string> lines;
+    if (!load_text_lines(path, lines)) { err = "Cannot read DMRIds file"; return false; }
+
+    bool found = false;
+    for (size_t i=0; i<lines.size(); ++i) {
+        long id = 0;
+        std::string cs, nm;
+        if (!parse_dmrids_line(lines[i], &id, &cs, &nm)) continue;
+        if (id == (long)dmrid) {
+            if (!cs.empty()) callsign_inout = cs;
+            found = true;
+            lines[i] = std::to_string((unsigned)dmrid) + " " + callsign_inout + " " + name;
+            break;
+        }
+    }
+
+    if (!found) {
+        if (callsign_inout.empty()) callsign_inout = std::string("DMR") + std::to_string((unsigned)dmrid);
+        lines.push_back(std::to_string((unsigned)dmrid) + " " + callsign_inout + " " + name);
+    }
+
+    return write_text_lines(path, lines, err);
 }
 
 static bool append_auth_user_file(const char* path, dword dmrid, const char* pass, std::string& err) {
@@ -2240,11 +2356,253 @@ static bool read_http_request(struct io* io, std::string& out) {
     return !out.empty();
 }
 
+static std::string request_header_value(const std::string& req, const char* key) {
+    if (!key || !*key) return "";
+    size_t hdr_end = req.find("\r\n\r\n");
+    if (hdr_end == std::string::npos) hdr_end = req.size();
+    size_t line_start = req.find("\r\n");
+    if (line_start == std::string::npos) return "";
+    line_start += 2;
+    while (line_start < hdr_end) {
+        size_t line_end = req.find("\r\n", line_start);
+        if (line_end == std::string::npos || line_end > hdr_end) line_end = hdr_end;
+        size_t colon = req.find(':', line_start);
+        if (colon != std::string::npos && colon < line_end) {
+            std::string k = req.substr(line_start, colon - line_start);
+            if (STRCASECMP(k.c_str(), key) == 0) {
+                std::string v = req.substr(colon + 1, line_end - colon - 1);
+                while (!v.empty() && (v[0] == ' ' || v[0] == '\t')) v.erase(0, 1);
+                while (!v.empty() && (v[v.size()-1] == ' ' || v[v.size()-1] == '\t')) v.erase(v.size()-1, 1);
+                return v;
+            }
+        }
+        line_start = line_end + 2;
+    }
+    return "";
+}
+
+static std::string hex_encode(const BYTE* data, size_t len) {
+    static const char* hex = "0123456789abcdef";
+    std::string out;
+    out.reserve(len * 2);
+    for (size_t i=0; i<len; ++i) {
+        unsigned char b = data[i];
+        out.push_back(hex[(b >> 4) & 0x0F]);
+        out.push_back(hex[b & 0x0F]);
+    }
+    return out;
+}
+
+static void web_session_cleanup() {
+    unsigned now = now_sec();
+    for (std::map<std::string, WebSession>::iterator it = g_web_sessions.begin(); it != g_web_sessions.end(); ) {
+        if (it->second.expires <= now) g_web_sessions.erase(it++);
+        else ++it;
+    }
+}
+
+static std::string web_session_create(dword dmrid) {
+    unsigned now = now_sec();
+    char seed[256];
+    snprintf(seed, sizeof(seed), "%u|%u|%u|%u|%u|%lu", (unsigned)dmrid, now, (unsigned)g_tick, (unsigned)g_sec, (unsigned)rand(), (unsigned long)g_web_sessions.size());
+    BYTE hash[SHA256_BLOCK_SIZE];
+    make_sha256_hash(seed, (int)strlen(seed), hash, NULL, 0);
+    std::string token = hex_encode(hash, sizeof(hash));
+    WebSession ws;
+    ws.dmrid = dmrid;
+    ws.expires = now + WEB_SESSION_TTL;
+    g_web_sessions[token] = ws;
+    return token;
+}
+
+static bool web_session_lookup(const std::string& token, dword* out_dmrid) {
+    if (out_dmrid) *out_dmrid = 0;
+    if (token.empty()) return false;
+    web_session_cleanup();
+    std::map<std::string, WebSession>::iterator it = g_web_sessions.find(token);
+    if (it == g_web_sessions.end()) return false;
+    unsigned now = now_sec();
+    if (it->second.expires <= now) { g_web_sessions.erase(it); return false; }
+    it->second.expires = now + WEB_SESSION_TTL;
+    if (out_dmrid) *out_dmrid = it->second.dmrid;
+    return true;
+}
+
+static void web_session_remove(const std::string& token) {
+    if (!token.empty()) g_web_sessions.erase(token);
+}
+
+static std::string request_auth_token(const std::string& req) {
+    std::string token = request_header_value(req, "X-Auth-Token");
+    if (!token.empty()) return token;
+    return request_header_value(req, "Authorization");
+}
+
+static bool read_profile_for_dmrid(dword dmrid, std::string& callsign, std::string& name, std::string& err) {
+    callsign.clear();
+    name.clear();
+    if (!g_dmrids_file[0]) return true;
+    return dmrids_read_profile(g_dmrids_file, dmrid, callsign, name, err);
+}
+
 static void api_config(struct io* io) {
     std::string body = std::string("{\"authEnabled\":") + (g_auth_enabled ? "1" : "0")
         + ",\"registrationEnabled\":" + (g_auth_enabled ? "1" : "0")
+        + ",\"profileEnabled\":" + (g_auth_enabled ? "1" : "0")
         + ",\"dmrIdsFile\":\"" + json_escape(g_dmrids_file) + "\"}";
     http_send_json(io, 200, "OK", body);
+}
+
+static void api_login(struct io* io, const char* method, const char* body) {
+    if (!g_auth_enabled) {
+        http_send_json(io, 403, "Forbidden", "{\"ok\":false,\"message\":\"Login is disabled. Enable [Auth] -> Enable=1 first.\"}");
+        return;
+    }
+    if (!method || strcmp(method, "POST") != 0) {
+        http_send_json(io, 405, "Method Not Allowed", "{\"ok\":false,\"message\":\"POST required\"}");
+        return;
+    }
+
+    std::string dmrid_s = form_get_value(body, "dmrid");
+    std::string pass = form_get_value(body, "password");
+    collapse_spaces(dmrid_s);
+
+    long dmrid = strtol(dmrid_s.c_str(), NULL, 10);
+    if (dmrid <= 0 || dmrid > 99999999L) {
+        http_send_json(io, 400, "Bad Request", "{\"ok\":false,\"message\":\"Please enter a valid DMR-ID.\"}");
+        return;
+    }
+    if (!validate_password(pass)) {
+        http_send_json(io, 400, "Bad Request", "{\"ok\":false,\"message\":\"Password is invalid.\"}");
+        return;
+    }
+    if (!auth_verify_password((dword)dmrid, pass)) {
+        http_send_json(io, 401, "Unauthorized", "{\"ok\":false,\"message\":\"Invalid DMR-ID or password.\"}");
+        return;
+    }
+
+    std::string callsign, name, err;
+    if (!read_profile_for_dmrid((dword)dmrid, callsign, name, err)) {
+        std::string msg = std::string("{\"ok\":false,\"message\":\"") + json_escape(err) + "\"}";
+        http_send_json(io, 500, "Server Error", msg);
+        return;
+    }
+
+    std::string token = web_session_create((dword)dmrid);
+    std::string msg = std::string("{\"ok\":true,\"message\":\"Login successful.\",\"token\":\"")
+        + token + "\",\"dmrid\":" + std::to_string((unsigned)dmrid)
+        + ",\"callsign\":\"" + json_escape(callsign) + "\""
+        + ",\"name\":\"" + json_escape(name) + "\"}";
+    http_send_json(io, 200, "OK", msg);
+}
+
+static bool api_require_session(struct io* io, const std::string& req, dword* out_dmrid, std::string* out_token) {
+    std::string token = request_auth_token(req);
+    dword dmrid = 0;
+    if (!web_session_lookup(token, &dmrid)) {
+        http_send_json(io, 401, "Unauthorized", "{\"ok\":false,\"message\":\"Please log in first.\"}");
+        return false;
+    }
+    if (out_dmrid) *out_dmrid = dmrid;
+    if (out_token) *out_token = token;
+    return true;
+}
+
+static void api_profile(struct io* io, const std::string& req, const char* method, const char* body) {
+    dword dmrid = 0;
+    if (!api_require_session(io, req, &dmrid, NULL)) return;
+
+    if (!method || strcmp(method, "GET") == 0) {
+        std::string callsign, name, err;
+        if (!read_profile_for_dmrid(dmrid, callsign, name, err)) {
+            std::string msg = std::string("{\"ok\":false,\"message\":\"") + json_escape(err) + "\"}";
+            http_send_json(io, 500, "Server Error", msg);
+            return;
+        }
+        std::string msg = std::string("{\"ok\":true,\"dmrid\":") + std::to_string((unsigned)dmrid)
+            + ",\"callsign\":\"" + json_escape(callsign) + "\""
+            + ",\"name\":\"" + json_escape(name) + "\"}";
+        http_send_json(io, 200, "OK", msg);
+        return;
+    }
+
+    if (strcmp(method, "POST") != 0) {
+        http_send_json(io, 405, "Method Not Allowed", "{\"ok\":false,\"message\":\"GET or POST required\"}");
+        return;
+    }
+
+    std::string name = form_get_value(body, "name");
+    std::string current_pass = form_get_value(body, "currentPassword");
+    std::string new_pass = form_get_value(body, "newPassword");
+
+    collapse_spaces(name);
+
+    bool wants_name = !name.empty();
+    bool wants_pass = !new_pass.empty();
+    if (!wants_name && !wants_pass) {
+        http_send_json(io, 400, "Bad Request", "{\"ok\":false,\"message\":\"Nothing to update.\"}");
+        return;
+    }
+    if (wants_name && !sanitize_name(name)) {
+        http_send_json(io, 400, "Bad Request", "{\"ok\":false,\"message\":\"Name is invalid.\"}");
+        return;
+    }
+    if (wants_pass && !validate_password(new_pass)) {
+        http_send_json(io, 400, "Bad Request", "{\"ok\":false,\"message\":\"New password must be 4-127 visible characters with no spaces or commas.\"}");
+        return;
+    }
+    if (wants_pass && !auth_verify_password(dmrid, current_pass)) {
+        http_send_json(io, 401, "Unauthorized", "{\"ok\":false,\"message\":\"Current password is incorrect.\"}");
+        return;
+    }
+
+    std::string callsign, old_name, err;
+    if (!read_profile_for_dmrid(dmrid, callsign, old_name, err)) {
+        std::string msg = std::string("{\"ok\":false,\"message\":\"") + json_escape(err) + "\"}";
+        http_send_json(io, 500, "Server Error", msg);
+        return;
+    }
+
+    if (wants_name) {
+        if (!g_dmrids_file[0]) {
+            http_send_json(io, 500, "Server Error", "{\"ok\":false,\"message\":\"DMRIds.dat path is not configured.\"}");
+            return;
+        }
+        if (!dmrids_update_name_file(g_dmrids_file, dmrid, name.c_str(), callsign, err)) {
+            std::string msg = std::string("{\"ok\":false,\"message\":\"") + json_escape(err) + "\"}";
+            http_send_json(io, 500, "Server Error", msg);
+            return;
+        }
+    } else name = old_name;
+
+    if (wants_pass) {
+        if (!g_auth_file[0]) {
+            http_send_json(io, 500, "Server Error", "{\"ok\":false,\"message\":\"Auth file is not configured.\"}");
+            return;
+        }
+        if (!auth_update_password_file(g_auth_file, dmrid, new_pass.c_str(), err)) {
+            std::string msg = std::string("{\"ok\":false,\"message\":\"") + json_escape(err) + "\"}";
+            http_send_json(io, 500, "Server Error", msg);
+            return;
+        }
+        auth_load_now(g_auth_file);
+    }
+
+    std::string msg = std::string("{\"ok\":true,\"message\":\"Profile updated.\",\"dmrid\":")
+        + std::to_string((unsigned)dmrid)
+        + ",\"callsign\":\"" + json_escape(callsign) + "\""
+        + ",\"name\":\"" + json_escape(name) + "\"}";
+    http_send_json(io, 200, "OK", msg);
+}
+
+static void api_logout(struct io* io, const std::string& req, const char* method) {
+    if (!method || strcmp(method, "POST") != 0) {
+        http_send_json(io, 405, "Method Not Allowed", "{\"ok\":false,\"message\":\"POST required\"}");
+        return;
+    }
+    std::string token = request_auth_token(req);
+    web_session_remove(token);
+    http_send_json(io, 200, "OK", "{\"ok\":true,\"message\":\"Logged out.\"}");
 }
 
 static void api_register(struct io* io, const char* method, const char* body) {
@@ -2307,10 +2665,6 @@ static void api_register(struct io* io, const char* method, const char* body) {
     }
 
     if (exists_in_auth || exists_in_dmrids) {
-        std::string where;
-        if (exists_in_auth) where += "auth_users.csv";
-        if (exists_in_auth && exists_in_dmrids) where += " and ";
-        if (exists_in_dmrids) where += "DMRIds.dat";
         std::string msg = std::string("{\"ok\":false,\"message\":\"DMR-ID already exists!\"}");
         http_send_json(io, 409, "Conflict", msg);
         return;
@@ -2332,7 +2686,8 @@ static void api_register(struct io* io, const char* method, const char* body) {
 
     std::string msg = std::string("{\"ok\":true,\"message\":\"Registration saved for DMR-ID ")
         + std::to_string((unsigned)dmrid) + "\",\"dmrid\":" + std::to_string((unsigned)dmrid)
-        + ",\"callsign\":\"" + json_escape(callsign) + "\",\"name\":\"" + json_escape(name) + "\"}";
+        + ",\"callsign\":\"" + json_escape(callsign) + "\""
+        + ",\"name\":\"" + json_escape(name) + "\"}";
     http_send_json(io, 200, "OK", msg);
 }
 
@@ -2445,11 +2800,14 @@ static void handle_client(struct io* io){
     if (sscanf(req.c_str(), "%7s %1023s", method, path)!=2){ http_404(io); io_close(io); return; }
     size_t hdr_end = req.find("\r\n\r\n");
     const char* body = (hdr_end == std::string::npos) ? "" : req.c_str() + hdr_end + 4;
-    if      (strncmp(path, "/api/log", 8)==0)       { api_log(io, path); io_close(io); return; }
+    if      (strncmp(path, "/api/login", 10)==0)    { api_login(io, method, body); io_close(io); return; }
+    else if (strncmp(path, "/api/logout", 11)==0)   { api_logout(io, req, method); io_close(io); return; }
+    else if (strncmp(path, "/api/profile", 12)==0)  { api_profile(io, req, method, body); io_close(io); return; }
+    else if (strncmp(path, "/api/register", 13)==0) { api_register(io, method, body); io_close(io); return; }
+    else if (strncmp(path, "/api/config", 11)==0)   { api_config(io); io_close(io); return; }
     else if (strncmp(path, "/api/active", 11)==0)   { api_active(io); io_close(io); return; }
     else if (strncmp(path, "/api/stat", 9)==0)      { api_stat(io); io_close(io); return; }
-    else if (strncmp(path, "/api/config", 11)==0)   { api_config(io); io_close(io); return; }
-    else if (strncmp(path, "/api/register", 13)==0) { api_register(io, method, body); io_close(io); return; }
+    else if (strncmp(path, "/api/log", 8)==0)       { api_log(io, path); io_close(io); return; }
     if (serve_static(io, path)) { io_close(io); return; }
     http_404(io); io_close(io); return;
 }

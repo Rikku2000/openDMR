@@ -1,7 +1,12 @@
 const THEME_KEY = 'dmr.theme';
+const AUTH_TOKEN_KEY = 'dmr.authToken';
+const AUTH_USER_KEY = 'dmr.authUser';
+
 const root = document.documentElement;
 const page = document.body.dataset.page || 'dashboard';
-let runtimeConfig = { authEnabled: false, registrationEnabled: false, dmrIdsFile: '' };
+let runtimeConfig = { authEnabled: false, registrationEnabled: false, profileEnabled: false, dmrIdsFile: '' };
+let authState = { token: '', user: null };
+let authPromptedOnProfile = false;
 
 function applyTheme() {
   const theme = localStorage.getItem(THEME_KEY) || 'dark';
@@ -20,14 +25,55 @@ function initThemeToggle() {
   });
 }
 
-async function fetchJSON(url) {
-  const response = await fetch(url, { cache: 'no-store' });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  return response.json();
+function loadAuthState() {
+  try {
+    authState.token = localStorage.getItem(AUTH_TOKEN_KEY) || '';
+    const rawUser = localStorage.getItem(AUTH_USER_KEY);
+    authState.user = rawUser ? JSON.parse(rawUser) : null;
+  } catch (error) {
+    console.error('auth localStorage:', error);
+    authState = { token: '', user: null };
+  }
+}
+
+function saveAuthState() {
+  if (authState.token) localStorage.setItem(AUTH_TOKEN_KEY, authState.token);
+  else localStorage.removeItem(AUTH_TOKEN_KEY);
+
+  if (authState.user) localStorage.setItem(AUTH_USER_KEY, JSON.stringify(authState.user));
+  else localStorage.removeItem(AUTH_USER_KEY);
+}
+
+function clearAuthState() {
+  authState = { token: '', user: null };
+  saveAuthState();
+}
+
+async function fetchJSON(url, options = {}) {
+  const headers = new Headers(options.headers || {});
+  if (!headers.has('Cache-Control')) headers.set('Cache-Control', 'no-store');
+  if (authState.token && !headers.has('X-Auth-Token')) headers.set('X-Auth-Token', authState.token);
+  const response = await fetch(url, { cache: 'no-store', ...options, headers });
+  let payload = null;
+  try {
+    payload = await response.json();
+  } catch (error) {
+    payload = null;
+  }
+  if (!response.ok) {
+    const message = payload && payload.message ? payload.message : `HTTP ${response.status}`;
+    const err = new Error(message);
+    err.status = response.status;
+    err.payload = payload;
+    throw err;
+  }
+  return payload;
 }
 
 async function fetchText(url) {
-  const response = await fetch(url, { cache: 'no-store' });
+  const headers = new Headers({ 'Cache-Control': 'no-store' });
+  if (authState.token) headers.set('X-Auth-Token', authState.token);
+  const response = await fetch(url, { cache: 'no-store', headers });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   return response.text();
 }
@@ -52,12 +98,245 @@ function setChipTone(id, tone) {
   if (tone === 'bad') el.classList.add('chip-bad');
 }
 
+function createEl(tag, className, text) {
+  const el = document.createElement(tag);
+  if (className) el.className = className;
+  if (text != null) el.textContent = text;
+  return el;
+}
+
+function buildUrlEncoded(data) {
+  const body = new URLSearchParams();
+  Object.entries(data).forEach(([key, value]) => body.append(key, String(value ?? '')));
+  return body;
+}
+
+function showLoginModal() {
+  const modal = document.getElementById('login-modal');
+  if (!modal) return;
+  modal.classList.remove('is-hidden');
+  document.body.classList.add('modal-open');
+  const input = document.getElementById('login-dmrid');
+  if (input) input.focus();
+}
+
+function closeLoginModal() {
+  const modal = document.getElementById('login-modal');
+  if (!modal) return;
+  modal.classList.add('is-hidden');
+  document.body.classList.remove('modal-open');
+}
+
+function setLoginStatus(message, tone = '') {
+  const box = document.getElementById('login-status');
+  if (!box) return;
+  box.textContent = message;
+  box.className = 'form-status';
+  if (tone === 'ok') box.classList.add('is-ok');
+  if (tone === 'warn') box.classList.add('is-warn');
+  if (tone === 'bad') box.classList.add('is-bad');
+}
+
+function setProfileStatus(message, tone = '') {
+  const box = document.getElementById('profile-status');
+  if (!box) return;
+  box.textContent = message;
+  box.className = 'form-status';
+  if (tone === 'ok') box.classList.add('is-ok');
+  if (tone === 'warn') box.classList.add('is-warn');
+  if (tone === 'bad') box.classList.add('is-bad');
+}
+
+function ensureAuthChrome() {
+  const nav = document.querySelector('.top-actions');
+  if (!nav || document.getElementById('auth-slot')) return;
+
+  const slot = createEl('div', 'auth-slot');
+  slot.id = 'auth-slot';
+
+  const chip = createEl('span', 'chip chip-soft is-hidden');
+  chip.id = 'auth-user-chip';
+  slot.append(chip);
+
+  const loginBtn = createEl('button', 'nav-btn is-hidden', 'Login');
+  loginBtn.id = 'login-open';
+  loginBtn.type = 'button';
+  loginBtn.addEventListener('click', showLoginModal);
+  slot.append(loginBtn);
+
+  const profileBtn = createEl('button', 'nav-btn is-hidden', 'Profile');
+  profileBtn.id = 'profile-nav';
+  profileBtn.type = 'button';
+  profileBtn.addEventListener('click', () => { location.href = 'profile.html'; });
+  slot.append(profileBtn);
+
+  const logoutBtn = createEl('button', 'nav-btn is-hidden', 'Logout');
+  logoutBtn.id = 'logout-btn';
+  logoutBtn.type = 'button';
+  logoutBtn.addEventListener('click', logout);
+  slot.append(logoutBtn);
+
+  nav.append(slot);
+
+  const modal = document.createElement('div');
+  modal.id = 'login-modal';
+  modal.className = 'modal-backdrop is-hidden';
+  modal.innerHTML = `
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="login-title">
+      <div class="panel-head modal-head">
+        <div>
+          <div class="panel-title" id="login-title">Login</div>
+          <div class="panel-subtitle">Use your DMR-ID and password</div>
+        </div>
+        <button id="login-close" class="nav-btn modal-close" type="button">Close</button>
+      </div>
+      <form id="login-form" class="register-form compact-form">
+        <label class="field">
+          <span>DMR-ID</span>
+          <input id="login-dmrid" name="dmrid" type="number" inputmode="numeric" min="1" required />
+        </label>
+        <label class="field">
+          <span>Password</span>
+          <input id="login-password" name="password" type="password" maxlength="127" required />
+        </label>
+        <div class="field-actions field-span-2 auth-actions-row">
+          <button id="login-submit" class="nav-btn submit-btn" type="submit">Login</button>
+          <div id="login-status" class="form-status">Ready.</div>
+        </div>
+      </form>
+    </div>
+  `;
+  document.body.append(modal);
+
+  modal.addEventListener('click', (event) => {
+    if (event.target === modal) closeLoginModal();
+  });
+
+  const closeBtn = document.getElementById('login-close');
+  if (closeBtn) closeBtn.addEventListener('click', closeLoginModal);
+
+  const form = document.getElementById('login-form');
+  if (form) {
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const submitBtn = document.getElementById('login-submit');
+      const dmrid = document.getElementById('login-dmrid')?.value || '';
+      const password = document.getElementById('login-password')?.value || '';
+
+      if (submitBtn) submitBtn.disabled = true;
+      setLoginStatus('Logging in…');
+
+      try {
+        const response = await fetchJSON('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: buildUrlEncoded({ dmrid, password })
+        });
+
+        authState.token = response.token || '';
+        authState.user = {
+          dmrid: response.dmrid,
+          callsign: response.callsign || '',
+          name: response.name || ''
+        };
+        saveAuthState();
+        syncAuthUi();
+        renderProfileView();
+        setLoginStatus(response.message || 'Login successful.', 'ok');
+        form.reset();
+        setTimeout(closeLoginModal, 250);
+      } catch (error) {
+        setLoginStatus(error.message || 'Login failed.', 'bad');
+      } finally {
+        if (submitBtn) submitBtn.disabled = false;
+      }
+    });
+  }
+}
+
+function syncAuthUi() {
+  const enabled = !!runtimeConfig.authEnabled;
+  const chip = document.getElementById('auth-user-chip');
+  const loginBtn = document.getElementById('login-open');
+  const profileBtn = document.getElementById('profile-nav');
+  const logoutBtn = document.getElementById('logout-btn');
+
+  if (!enabled) {
+    chip?.classList.add('is-hidden');
+    loginBtn?.classList.add('is-hidden');
+    profileBtn?.classList.add('is-hidden');
+    logoutBtn?.classList.add('is-hidden');
+    return;
+  }
+
+  const loggedIn = !!(authState.token && authState.user);
+  if (chip) {
+    chip.classList.toggle('is-hidden', !loggedIn);
+    chip.textContent = loggedIn
+      ? `DMR-ID: ${authState.user.dmrid} (${authState.user.name || 'Callsign'})`
+      : '';
+  }
+
+  loginBtn?.classList.toggle('is-hidden', loggedIn);
+  profileBtn?.classList.toggle('is-hidden', !loggedIn);
+  logoutBtn?.classList.toggle('is-hidden', !loggedIn);
+
+  if (profileBtn) {
+    profileBtn.classList.toggle('is-current', page === 'profile');
+  }
+}
+
+async function refreshSession() {
+  if (!authState.token) {
+    syncAuthUi();
+    renderProfileView();
+    return;
+  }
+
+  try {
+    const profile = await fetchJSON('/api/profile');
+    authState.user = {
+      dmrid: profile.dmrid,
+      callsign: profile.callsign || '',
+      name: profile.name || ''
+    };
+    saveAuthState();
+  } catch (error) {
+    if (error.status === 401) clearAuthState();
+    else console.error('profile refresh:', error);
+  }
+
+  syncAuthUi();
+  renderProfileView();
+}
+
+async function logout() {
+  try {
+    if (authState.token) {
+      await fetchJSON('/api/logout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: buildUrlEncoded({})
+      });
+    }
+  } catch (error) {
+    console.error('logout:', error);
+  }
+
+  clearAuthState();
+  syncAuthUi();
+  renderProfileView();
+  closeLoginModal();
+  if (page === 'profile') setProfileStatus('Logged out.', 'warn');
+}
+
 async function loadRuntimeConfig() {
   try {
     const config = await fetchJSON('/api/config');
     runtimeConfig = {
       authEnabled: !!config.authEnabled,
       registrationEnabled: !!config.registrationEnabled,
+      profileEnabled: !!config.profileEnabled,
       dmrIdsFile: config.dmrIdsFile || ''
     };
   } catch (error) {
@@ -76,13 +355,10 @@ async function loadRuntimeConfig() {
         if ('disabled' in el) el.disabled = !runtimeConfig.registrationEnabled;
       });
     }
-    const hint = document.getElementById('register-hint');
-    if (hint) {
-      hint.textContent = runtimeConfig.registrationEnabled
-        ? 'New users are saved into auth_users.csv and DMRIds.dat.'
-        : 'Set [Auth] Enable=1 in dmr.conf to allow user registration.';
-    }
   }
+
+  syncAuthUi();
+  renderProfileView();
 }
 
 function setRegisterStatus(message, tone = 'soft') {
@@ -116,131 +392,73 @@ function initRegistrationForm() {
     setRegisterStatus('Saving registration…');
 
     try {
-      const response = await fetch('/api/register', {
+      const response = await fetchJSON('/api/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        cache: 'no-store',
-        body: body.toString()
+        body
       });
-
-      const payload = await response.json().catch(() => ({ ok: false, message: `HTTP ${response.status}` }));
-      if (!response.ok || !payload.ok) {
-        throw new Error(payload.message || `HTTP ${response.status}`);
-      }
-
-      setRegisterStatus(payload.message || 'Registration saved.', 'ok');
-      const pw = document.getElementById('password');
-      if (pw) pw.value = '';
+      setRegisterStatus(response.message || 'Registration saved.', 'ok');
+      form.reset();
     } catch (error) {
-      console.error('register:', error);
-      setRegisterStatus(error.message || 'Registration failed.', 'bad');
+      setRegisterStatus(error.message || 'Unable to save registration.', 'bad');
     } finally {
       if (submitBtn) submitBtn.disabled = false;
     }
   });
 }
 
-function td(value, className = '') {
-  const cell = document.createElement('td');
-  if (className) cell.className = className;
-  cell.textContent = value;
-  return cell;
-}
-
-function badge(text, cls) {
-  const span = document.createElement('span');
-  span.className = `badge ${cls || ''}`.trim();
-  span.textContent = text;
-  return span;
-}
-
-function badgesFor(record) {
-  const wrap = document.createElement('div');
-  wrap.className = 'badge-stack';
-
-  if (record.src === 2) wrap.append(badge('OpenBridge', 'ob'));
-  else if (record.aprs) wrap.append(badge('APRS', 'aprs'));
-  else if (record.sms) wrap.append(badge('SMS', 'sms'));
-  else wrap.append(badge('Talk', 'talk'));
-
-  return wrap;
-}
-
-function localNowParts() {
-  const now = new Date();
-  const time = now.toLocaleTimeString([], {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit'
-  });
-  const date = now.toLocaleDateString([], {
-    weekday: 'short',
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric'
-  });
-  return { time, date };
-}
-
 function renderClock() {
-  const { time, date } = localNowParts();
-  document.querySelectorAll('#clock-time').forEach((el) => { el.textContent = time; });
-  document.querySelectorAll('#clock-date').forEach((el) => { el.textContent = date; });
-}
-
-function uniqueNonEmpty(values) {
-  return [...new Set(values.filter((value) => value !== '' && value != null))];
-}
-
-function updateSummaryRows(rows) {
-  const host = document.getElementById('activity-summary');
-  if (!host) return;
-  host.innerHTML = '';
-
-  if (!rows.length) {
-    const empty = document.createElement('div');
-    empty.className = 'summary-row';
-    empty.innerHTML = '<span>No log data yet</span><strong>—</strong>';
-    host.append(empty);
-    return;
-  }
-
-  for (const row of rows) {
-    const div = document.createElement('div');
-    div.className = 'summary-row';
-    div.innerHTML = `<span>${row.label}</span><strong>${row.value}</strong>`;
-    host.append(div);
-  }
-}
-
-function updateHero(activeCount, lastDate) {
-  const heroStatus = document.getElementById('hero-status');
-  const heroSummary = document.getElementById('hero-summary');
-  const activePanel = document.getElementById('active-panel');
-  const activeMeta = document.getElementById('active-meta');
-
-  if (!heroStatus || !heroSummary) return;
-
-  if (activeCount > 0) {
-    heroStatus.textContent = 'Live traffic detected';
-    heroStatus.className = 'chip chip-bad';
-    heroSummary.textContent = `${activeCount} active transmission${activeCount === 1 ? '' : 's'} right now`;
-    activePanel?.classList.add('is-live');
-    if (activeMeta) activeMeta.textContent = `${activeCount} active now`;
-  } else {
-    heroStatus.textContent = 'Network idle';
-    heroStatus.className = 'chip chip-soft';
-    heroSummary.textContent = lastDate ? `Last seen activity: ${lastDate}` : 'No active transmissions at the moment';
-    activePanel?.classList.remove('is-live');
-    if (activeMeta) activeMeta.textContent = 'No active calls';
-  }
+  const now = new Date();
+  setText('clock-time', now.toLocaleTimeString());
+  setText('clock-date', now.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }));
 }
 
 function updateRefresh() {
-  const { time } = localNowParts();
+  const time = new Date().toLocaleTimeString();
   setText('metric-refresh', time);
-  setText('metric-refresh-sub', 'Synced just now');
+  setText('metric-refresh-sub', 'Last successful refresh');
   setText('monitor-updated', `Updated ${time}`);
+}
+
+function td(text, className = '') {
+  const cell = document.createElement('td');
+  cell.textContent = text;
+  if (className) cell.className = className;
+  return cell;
+}
+
+function uniqueNonEmpty(values) {
+  return [...new Set(values.filter((value) => value !== null && value !== undefined && value !== ''))];
+}
+
+function updateSummaryRows(rows) {
+  const summary = document.getElementById('activity-summary');
+  if (!summary) return;
+  summary.innerHTML = '';
+  if (!rows.length) {
+    const row = createEl('div', 'summary-row');
+    row.append(createEl('span', '', 'No log data yet'));
+    row.append(createEl('strong', '', '—'));
+    summary.append(row);
+    return;
+  }
+  rows.forEach((item) => {
+    const row = createEl('div', 'summary-row');
+    row.append(createEl('span', '', item.label));
+    row.append(createEl('strong', '', item.value));
+    summary.append(row);
+  });
+}
+
+function badgesFor(row) {
+  const wrap = createEl('div', 'badge-stack');
+  const entries = [];
+  if (row.aprs) entries.push(['APRS', 'badge aprs']);
+  if (row.sms) entries.push(['SMS', 'badge sms']);
+  if (row.src === 2) entries.push(['OBP', 'badge ob']);
+  if (!entries.length) entries.push(['TALK', 'badge talk']);
+  entries.forEach(([label, className]) => wrap.append(createEl('span', className, label)));
+  return wrap;
 }
 
 async function renderActive() {
@@ -258,35 +476,40 @@ async function renderActive() {
       cell.textContent = 'No active transmissions';
       tr.append(cell);
       tbody.append(tr);
-    } else {
-      for (const row of data) {
-        const tr = document.createElement('tr');
-        tr.append(td(row.date || '—'));
-        tr.append(td(row.radio ?? '—', 'emphasis'));
-        const badgeCell = td('');
-        badgeCell.append(badgesFor(row));
-        tr.append(badgeCell);
-        tr.append(td(row.tg ?? '—'));
-        tr.append(td(row.slot ?? '—'));
-        tr.append(td(row.node ?? '—'));
-        tr.append(td(row.time ?? '—', 'numeric'));
-        tbody.append(tr);
-      }
+      setText('metric-active', '0');
+      setText('metric-active-sub', 'No live activity');
+      setText('active-meta', 'No active calls');
+      setText('hero-status', 'Idle');
+      setChipTone('hero-status', 'soft');
+      setText('hero-summary', 'No active transmissions yet');
+      document.getElementById('active-panel')?.classList.remove('is-live');
+      return;
     }
 
+    data.forEach((row) => {
+      const tr = document.createElement('tr');
+      tr.append(td(row.date || '—'));
+      tr.append(td(row.radio ?? '—', 'emphasis'));
+      const badgeCell = td('');
+      badgeCell.append(badgesFor(row));
+      tr.append(badgeCell);
+      tr.append(td(row.tg ?? '—'));
+      tr.append(td(row.slot ?? '—'));
+      tr.append(td(row.node ?? '—'));
+      tr.append(td(row.time ?? '—', 'numeric'));
+      tbody.append(tr);
+    });
+
+    const live = data[0];
     setText('metric-active', String(data.length));
-    setText('metric-active-sub', data.length ? 'Live transmissions on-air now' : 'No live activity');
-    updateHero(data.length, data[0]?.date || '');
+    setText('metric-active-sub', live ? `Latest radio ${live.radio}` : 'No live activity');
+    setText('active-meta', live ? `TG ${live.tg} · Slot ${live.slot}` : 'No active calls');
+    setText('hero-status', 'Live traffic');
+    setChipTone('hero-status', '');
+    setText('hero-summary', live ? `Radio ${live.radio} on TG ${live.tg}` : 'No active transmissions yet');
+    document.getElementById('active-panel')?.classList.add('is-live');
   } catch (error) {
     console.error('active:', error);
-    tbody.innerHTML = '';
-    const tr = document.createElement('tr');
-    const cell = document.createElement('td');
-    cell.colSpan = 7;
-    cell.textContent = 'Unable to load active calls';
-    tr.append(cell);
-    tbody.append(tr);
-    updateHero(0, '');
   }
 }
 
@@ -306,7 +529,7 @@ async function renderLog() {
       tr.append(cell);
       tbody.append(tr);
     } else {
-      for (const row of data) {
+      data.forEach((row) => {
         const tr = document.createElement('tr');
         tr.append(td(row.id ?? '—', 'numeric'));
         tr.append(td(row.date || '—'));
@@ -322,7 +545,7 @@ async function renderLog() {
         tr.append(td(row.online ? 'YES' : 'NO', row.online ? 'ok' : ''));
         tr.append(td(row.connect ?? '—'));
         tbody.append(tr);
-      }
+      });
     }
 
     const uniqueTGs = uniqueNonEmpty(data.map((row) => row.tg));
@@ -380,29 +603,117 @@ async function renderStat() {
   }
 }
 
+function renderProfileView() {
+  if (page !== 'profile') return;
+
+  const guest = document.getElementById('profile-guest');
+  const details = document.getElementById('profile-details');
+  const form = document.getElementById('profile-form');
+  const disabled = !runtimeConfig.profileEnabled;
+  const loggedIn = !!(authState.token && authState.user);
+
+  if (guest) guest.classList.toggle('is-hidden', disabled || loggedIn);
+  if (details) details.classList.toggle('is-hidden', disabled || !loggedIn);
+  if (form) form.classList.toggle('is-hidden', disabled || !loggedIn);
+
+  if (disabled) {
+    setProfileStatus('Profile editing is disabled because auth is not enabled in dmr.conf.', 'warn');
+    return;
+  }
+
+  if (!loggedIn) {
+    setProfileStatus('Please log in to edit your profile.', 'warn');
+    if (!authPromptedOnProfile) {
+      authPromptedOnProfile = true;
+      showLoginModal();
+    }
+    return;
+  }
+
+  setText('profile-dmrid', String(authState.user.dmrid || '—'));
+  setText('profile-callsign', authState.user.callsign || '—');
+  const nameInput = document.getElementById('profile-name');
+  if (nameInput && document.activeElement !== nameInput) nameInput.value = authState.user.name || '';
+  setProfileStatus('Ready. Leave password fields blank to change only the name.');
+}
+
+function initProfileForm() {
+  const form = document.getElementById('profile-form');
+  if (!form) return;
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+
+    if (!authState.token || !authState.user) {
+      setProfileStatus('Please log in first.', 'warn');
+      showLoginModal();
+      return;
+    }
+
+    const submitBtn = document.getElementById('profile-submit');
+    const name = document.getElementById('profile-name')?.value || '';
+    const currentPassword = document.getElementById('profile-current-password')?.value || '';
+    const newPassword = document.getElementById('profile-new-password')?.value || '';
+    const confirmPassword = document.getElementById('profile-confirm-password')?.value || '';
+
+    if (newPassword && newPassword !== confirmPassword) {
+      setProfileStatus('New passwords do not match.', 'bad');
+      return;
+    }
+
+    if (submitBtn) submitBtn.disabled = true;
+    setProfileStatus('Saving profile…');
+
+    try {
+      const response = await fetchJSON('/api/profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: buildUrlEncoded({ name, currentPassword, newPassword })
+      });
+
+      authState.user = {
+        dmrid: response.dmrid,
+        callsign: response.callsign || '',
+        name: response.name || ''
+      };
+      saveAuthState();
+      syncAuthUi();
+      renderProfileView();
+      setProfileStatus(response.message || 'Profile updated.', 'ok');
+      const currentField = document.getElementById('profile-current-password');
+      const newField = document.getElementById('profile-new-password');
+      const confirmField = document.getElementById('profile-confirm-password');
+      if (currentField) currentField.value = '';
+      if (newField) newField.value = '';
+      if (confirmField) confirmField.value = '';
+    } catch (error) {
+      setProfileStatus(error.message || 'Unable to update profile.', 'bad');
+    } finally {
+      if (submitBtn) submitBtn.disabled = false;
+    }
+  });
+}
+
 async function tick() {
   renderClock();
   updateRefresh();
 
   const jobs = [];
-  if (page === 'dashboard') {
-    jobs.push(renderActive(), renderLog());
-  }
-  if (page === 'monitor') {
-    jobs.push(renderStat());
-  }
-  if (page === 'register') {
-    jobs.push(renderActive(), renderLog());
-    jobs.push(renderStat());
-  }
+  if (page === 'dashboard') jobs.push(renderActive(), renderLog());
+  if (page === 'monitor') jobs.push(renderStat());
+  if (page === 'register') jobs.push(renderActive(), renderLog(), renderStat());
 
   await Promise.allSettled(jobs);
 }
 
+loadAuthState();
 initThemeToggle();
+ensureAuthChrome();
 initRegistrationForm();
-loadRuntimeConfig();
+initProfileForm();
 renderClock();
+renderProfileView();
+loadRuntimeConfig().then(refreshSession);
 tick();
 setInterval(renderClock, 1000);
 setInterval(tick, 3000);

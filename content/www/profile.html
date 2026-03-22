@@ -6,7 +6,7 @@
     <title>openDMR</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
-  <body data-page="register">
+  <body data-page="profile">
     <div class="app-shell">
       <header class="topbar">
         <div class="brand-wrap">
@@ -22,7 +22,7 @@
         <nav class="top-actions" aria-label="Primary navigation">
           <button onclick="location.href='index.html';" class="nav-btn" type="button">Dashboard</button>
           <button onclick="location.href='monitor.html';" class="nav-btn" type="button">Monitor</button>
-          <button onclick="location.href='register.html';" class="nav-btn is-current" data-auth-only type="button">Register</button>
+          <button onclick="location.href='register.html';" class="nav-btn is-hidden" data-auth-only type="button">Register</button>
         </nav>
       </header>
 
@@ -50,8 +50,8 @@
             <div class="pulse-card">
               <div class="pulse-dot"></div>
               <div>
-                <div class="pulse-title">Auto refresh</div>
-                <div class="pulse-sub">Every 3 seconds</div>
+                <div class="pulse-title">Profile sync</div>
+                <div class="pulse-sub">Session refresh on load</div>
               </div>
             </div>
           </div>
@@ -61,35 +61,48 @@
           <article class="panel-card form-card">
             <div class="panel-head">
               <div>
-                <div class="panel-title">New user registration</div>
-                <div class="panel-subtitle">Enter DMR-ID, callsign, name and password</div>
+                <div class="panel-title">User profile</div>
+                <div class="panel-subtitle">Update your display name and password</div>
               </div>
             </div>
 
-            <form id="register-form" class="register-form">
-              <label class="field">
+            <div id="profile-guest" class="form-status">Please log in to edit your profile.</div>
+
+            <div id="profile-details" class="profile-summary is-hidden">
+              <div class="summary-row">
                 <span>DMR-ID</span>
-                <input id="dmrid" name="dmrid" type="number" inputmode="numeric" min="1" placeholder="" required />
-              </label>
-
-              <label class="field">
+                <strong id="profile-dmrid">—</strong>
+              </div>
+              <div class="summary-row">
                 <span>Callsign</span>
-                <input id="callsign" name="callsign" type="text" placeholder="" maxlength="32" required />
-              </label>
+                <strong id="profile-callsign">—</strong>
+              </div>
+            </div>
 
+            <form id="profile-form" class="register-form is-hidden">
               <label class="field field-span-2">
                 <span>Name</span>
-                <input id="name" name="name" type="text" placeholder="" maxlength="96" required />
+                <input id="profile-name" name="name" type="text" maxlength="96" placeholder="Your name" required />
               </label>
 
               <label class="field field-span-2">
-                <span>Password</span>
-                <input id="password" name="password" type="password" placeholder="Choose a password" maxlength="127" required />
+                <span>Current password</span>
+                <input id="profile-current-password" name="currentPassword" type="password" maxlength="127" placeholder="Required only when changing password" />
+              </label>
+
+              <label class="field">
+                <span>New password</span>
+                <input id="profile-new-password" name="newPassword" type="password" maxlength="127" placeholder="Leave blank to keep current password" />
+              </label>
+
+              <label class="field">
+                <span>Confirm new password</span>
+                <input id="profile-confirm-password" type="password" maxlength="127" placeholder="Repeat new password" />
               </label>
 
               <div class="field-actions field-span-2">
-                <button id="register-submit" class="nav-btn submit-btn" type="submit">Save registration</button>
-                <div id="register-status" class="form-status">Ready.</div>
+                <button id="profile-submit" class="nav-btn submit-btn" type="submit">Save profile</button>
+                <div id="profile-status" class="form-status">Ready.</div>
               </div>
             </form>
           </article>
