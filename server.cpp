@@ -2217,6 +2217,21 @@ static int fetch_stat(char* out, size_t cap) {
 }
 
 struct io { sock_t fd; };
+
+static void io_set_timeouts(struct io* io, int ms){
+#ifdef _WIN32
+    DWORD tv = (DWORD)ms;
+    setsockopt(io->fd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
+    setsockopt(io->fd, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof(tv));
+#else
+    struct timeval tv;
+    tv.tv_sec  = ms / 1000;
+    tv.tv_usec = (ms % 1000) * 1000;
+    setsockopt(io->fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(io->fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+#endif
+}
+
 static int io_recv(struct io* io, char* buf, int cap){
 #ifdef _WIN32
     return recv(io->fd, buf, cap, 0);
@@ -2234,8 +2249,8 @@ static int io_send_all(struct io* io, const char* data, size_t len){ size_t off=
 static void io_close(struct io* io){ CLOSESOCK(io->fd); }
 static void http_send(int code, const char* reason, const char* ctype, const char* body, struct io* io){
     char hdr[512]; int n = snprintf(hdr,sizeof(hdr),
-        "HTTP/1.1 %d %s\r\nDate: %s\r\nServer: dmr-monitor/2\r\nContent-Type: %s\r\nCache-Control: no-store\r\nContent-Length: %zu\r\n\r\n",
-        code,reason,http_time_now(),ctype,(size_t)strlen(body));
+		"HTTP/1.1 %d %s\r\nDate: %s\r\nServer: dmr-monitor/2\r\nContent-Type: %s\r\nCache-Control: no-store\r\nConnection: close\r\nContent-Length: %zu\r\n\r\n",
+		code,reason,http_time_now(),ctype,(size_t)strlen(body));
     io_send_all(io,hdr,(size_t)n); io_send_all(io,body,strlen(body));
 }
 static void http_404(struct io* io){ http_send(404, "Not Found", "text/plain", "Not found", io); }
@@ -2295,7 +2310,7 @@ static int serve_static(struct io* io, const char* url){
 	char hdr[512];
 	int n = snprintf(hdr, sizeof(hdr),
 		"HTTP/1.1 200 OK\r\nDate: %s\r\nServer: dmr-monitor/2\r\n"
-		"Content-Type: %s\r\nCache-Control: no-store\r\nContent-Length: %ld\r\n",
+		"Content-Type: %s\r\nCache-Control: no-store\r\nConnection: close\r\nContent-Length: %ld\r\n",
 		http_time_now(), mime_from_ext(full), sz);
 	if (lm[0]) n += snprintf(hdr+n, sizeof(hdr)-n, "Last-Modified: %s\r\n", lm);
 	n += snprintf(hdr+n, sizeof(hdr)-n, "\r\n");
@@ -2339,6 +2354,7 @@ static bool read_http_request(struct io* io, std::string& out) {
     char buf[2048];
     size_t hdr_end = std::string::npos;
     int content_len = 0;
+	const size_t kMaxRequestSize = 1024 * 1024;
     while (out.size() < 16384) {
         int n = io_recv(io, buf, (int)sizeof(buf));
         if (n <= 0) break;
@@ -2348,12 +2364,16 @@ static bool read_http_request(struct io* io, std::string& out) {
             if (pos != std::string::npos) {
                 hdr_end = pos + 4;
                 content_len = parse_content_length(out, hdr_end);
+				if (content_len < 0 || (size_t)content_len > kMaxRequestSize) return false;
                 if ((int)(out.size() - hdr_end) >= content_len) return true;
                 if (content_len <= 0) return true;
             }
         } else if ((int)(out.size() - hdr_end) >= content_len) return true;
     }
-    return !out.empty();
+
+    if (hdr_end == std::string::npos) return false;
+    if (content_len <= 0) return true;
+    return ((int)(out.size() - hdr_end) >= content_len);
 }
 
 static std::string request_header_value(const std::string& req, const char* key) {
@@ -2841,7 +2861,10 @@ static void* monitor_thread(void* lp){ (void)lp;
 #endif
     ){
         struct sockaddr_in ca; socklen_t calen=sizeof(ca); sock_t c=accept(s,(struct sockaddr*)&ca,&calen);
-        if (c==SOCK_INVALID) continue; struct io io={c}; handle_client(&io);
+        if (c==SOCK_INVALID) continue;
+        struct io io={c};
+        io_set_timeouts(&io, 5000);
+        handle_client(&io);
     }
 #ifdef _WIN32
     return 0;
