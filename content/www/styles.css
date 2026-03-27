@@ -75,7 +75,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
   justify-content: space-between;
   gap: 16px;
   margin: 0 auto 18px;
-  max-width: 1500px;
+  max-width: 96vw;
   padding: 14px 18px;
   border: 1px solid var(--line);
   border-radius: 22px;
@@ -145,7 +145,7 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 }
 
 .page {
-  max-width: 1500px;
+  max-width: 96vw;
   margin: 0 auto;
   display: grid;
   gap: 18px;
@@ -633,4 +633,10 @@ body.modal-open {
     padding: 16px;
     border-radius: 22px;
   }
+}
+
+.table td .badge-stack { margin: 0; }
+
+@media (max-width: 900px) {
+  #tab-openbridge { min-width: 1100px; }
 }

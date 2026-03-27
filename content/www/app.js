@@ -461,6 +461,111 @@ function badgesFor(row) {
   return wrap;
 }
 
+
+function statusBadge(status) {
+  const wrap = createEl('div', 'badge-stack');
+  const map = {
+    active: ['ACTIVE', 'badge ob'],
+    idle: ['IDLE', 'badge talk'],
+    unresolved: ['UNRESOLVED', 'badge sms'],
+    disabled: ['DISABLED', 'badge']
+  };
+  const [label, className] = map[status] || ['UNKNOWN', 'badge'];
+  wrap.append(createEl('span', className, label));
+  return wrap;
+}
+
+function formatSince(seconds) {
+  const sec = Number(seconds || 0);
+  if (!sec) return 'just now';
+  if (sec < 60) return `${sec}s ago`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  return `${day}d ago`;
+}
+
+async function renderOpenBridge() {
+  const tbody = document.querySelector('#tab-openbridge tbody');
+  if (!tbody) return;
+
+  try {
+    const data = await fetchJSON('/api/openbridge');
+    tbody.innerHTML = '';
+
+    if (!data.length) {
+      const tr = document.createElement('tr');
+      const cell = document.createElement('td');
+      cell.colSpan = 10;
+      cell.textContent = 'No enabled OpenBridge peers configured';
+      tr.append(cell);
+      tbody.append(tr);
+      setText('ob-metric-total', '0');
+      setText('ob-metric-total-sub', 'Enable OpenBridge1 or OpenBridge2 in dmr.conf');
+      setText('ob-metric-active', '0');
+      setText('ob-metric-active-sub', 'No bridge traffic');
+      setText('ob-metric-rx', '—');
+      setText('ob-metric-rx-sub', 'Waiting for traffic');
+      setText('ob-metric-tx', '—');
+      setText('ob-metric-tx-sub', 'Waiting for traffic');
+      setText('ob-table-meta', 'No OpenBridge peers loaded');
+      setText('ob-hero-status', 'No peers');
+      setChipTone('ob-hero-status', 'warn');
+      setText('ob-hero-summary', 'Nothing to show until an OpenBridge section is enabled');
+      return;
+    }
+
+    data.forEach((row) => {
+      const tr = document.createElement('tr');
+      tr.append(td(row.name || 'OpenBridge'));
+      const statusCell = td('');
+      statusCell.append(statusBadge(row.status));
+      tr.append(statusCell);
+      tr.append(td(`${row.targetHost || '—'}:${row.targetPort ?? '—'}`, 'emphasis'));
+      tr.append(td(row.resolvedIp || '—'));
+      tr.append(td(row.localPort ?? '—', 'numeric'));
+      tr.append(td(row.networkId ?? '—', 'numeric'));
+      tr.append(td(row.enhanced ? 'YES' : 'NO'));
+      tr.append(td(row.permitAll ? 'ALL' : (row.permitTGs || '—')));
+      tr.append(td(formatSince(row.secondsSinceRx)));
+      tr.append(td(formatSince(row.secondsSinceTx)));
+      tbody.append(tr);
+    });
+
+    const active = data.filter((row) => row.status === 'active');
+    const latestRx = [...data].sort((a, b) => (a.secondsSinceRx ?? 999999) - (b.secondsSinceRx ?? 999999))[0];
+    const latestTx = [...data].sort((a, b) => (a.secondsSinceTx ?? 999999) - (b.secondsSinceTx ?? 999999))[0];
+
+    setText('ob-metric-total', String(data.length));
+    setText('ob-metric-total-sub', data.map((row) => row.name).join(', '));
+    setText('ob-metric-active', String(active.length));
+    setText('ob-metric-active-sub', active.length ? active.map((row) => row.name).join(', ') : 'No peer active in the last 60s');
+    setText('ob-metric-rx', latestRx ? (latestRx.name || '—') : '—');
+    setText('ob-metric-rx-sub', latestRx ? `${formatSince(latestRx.secondsSinceRx)} from ${latestRx.targetHost}:${latestRx.targetPort}` : 'Waiting for traffic');
+    setText('ob-metric-tx', latestTx ? (latestTx.name || '—') : '—');
+    setText('ob-metric-tx-sub', latestTx ? `${formatSince(latestTx.secondsSinceTx)} to ${latestTx.targetHost}:${latestTx.targetPort}` : 'Waiting for traffic');
+    setText('ob-table-meta', `${data.length} peer${data.length === 1 ? '' : 's'} loaded`);
+    setText('ob-hero-status', active.length ? 'Bridge active' : 'Bridge idle');
+    setChipTone('ob-hero-status', active.length ? '' : 'soft');
+    setText('ob-hero-summary', data.map((row) => `${row.name} → ${row.targetHost}:${row.targetPort}`).join(' · '));
+  } catch (error) {
+    console.error('openbridge:', error);
+    tbody.innerHTML = '';
+    const tr = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = 10;
+    cell.textContent = 'Unable to load OpenBridge peers';
+    tr.append(cell);
+    tbody.append(tr);
+    setText('ob-table-meta', 'OpenBridge API request failed');
+    setText('ob-hero-status', 'API error');
+    setChipTone('ob-hero-status', 'bad');
+    setText('ob-hero-summary', 'Check that server.cpp includes /api/openbridge and restart the server');
+  }
+}
+
 async function renderActive() {
   const tbody = document.querySelector('#tab-active tbody');
   if (!tbody) return;
@@ -701,6 +806,7 @@ async function tick() {
   const jobs = [];
   if (page === 'dashboard') jobs.push(renderActive(), renderLog());
   if (page === 'monitor') jobs.push(renderStat());
+  if (page === 'openbridge') jobs.push(renderOpenBridge());
   if (page === 'register') jobs.push(renderActive(), renderLog(), renderStat());
 
   await Promise.allSettled(jobs);

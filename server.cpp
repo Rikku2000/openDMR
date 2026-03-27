@@ -2217,21 +2217,6 @@ static int fetch_stat(char* out, size_t cap) {
 }
 
 struct io { sock_t fd; };
-
-static void io_set_timeouts(struct io* io, int ms){
-#ifdef _WIN32
-    DWORD tv = (DWORD)ms;
-    setsockopt(io->fd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
-    setsockopt(io->fd, SOL_SOCKET, SO_SNDTIMEO, (const char*)&tv, sizeof(tv));
-#else
-    struct timeval tv;
-    tv.tv_sec  = ms / 1000;
-    tv.tv_usec = (ms % 1000) * 1000;
-    setsockopt(io->fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-    setsockopt(io->fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
-#endif
-}
-
 static int io_recv(struct io* io, char* buf, int cap){
 #ifdef _WIN32
     return recv(io->fd, buf, cap, 0);
@@ -2249,8 +2234,8 @@ static int io_send_all(struct io* io, const char* data, size_t len){ size_t off=
 static void io_close(struct io* io){ CLOSESOCK(io->fd); }
 static void http_send(int code, const char* reason, const char* ctype, const char* body, struct io* io){
     char hdr[512]; int n = snprintf(hdr,sizeof(hdr),
-		"HTTP/1.1 %d %s\r\nDate: %s\r\nServer: dmr-monitor/2\r\nContent-Type: %s\r\nCache-Control: no-store\r\nConnection: close\r\nContent-Length: %zu\r\n\r\n",
-		code,reason,http_time_now(),ctype,(size_t)strlen(body));
+        "HTTP/1.1 %d %s\r\nDate: %s\r\nServer: dmr-monitor/2\r\nContent-Type: %s\r\nCache-Control: no-store\r\nContent-Length: %zu\r\n\r\n",
+        code,reason,http_time_now(),ctype,(size_t)strlen(body));
     io_send_all(io,hdr,(size_t)n); io_send_all(io,body,strlen(body));
 }
 static void http_404(struct io* io){ http_send(404, "Not Found", "text/plain", "Not found", io); }
@@ -2310,7 +2295,7 @@ static int serve_static(struct io* io, const char* url){
 	char hdr[512];
 	int n = snprintf(hdr, sizeof(hdr),
 		"HTTP/1.1 200 OK\r\nDate: %s\r\nServer: dmr-monitor/2\r\n"
-		"Content-Type: %s\r\nCache-Control: no-store\r\nConnection: close\r\nContent-Length: %ld\r\n",
+		"Content-Type: %s\r\nCache-Control: no-store\r\nContent-Length: %ld\r\n",
 		http_time_now(), mime_from_ext(full), sz);
 	if (lm[0]) n += snprintf(hdr+n, sizeof(hdr)-n, "Last-Modified: %s\r\n", lm);
 	n += snprintf(hdr+n, sizeof(hdr)-n, "\r\n");
@@ -2354,7 +2339,6 @@ static bool read_http_request(struct io* io, std::string& out) {
     char buf[2048];
     size_t hdr_end = std::string::npos;
     int content_len = 0;
-	const size_t kMaxRequestSize = 1024 * 1024;
     while (out.size() < 16384) {
         int n = io_recv(io, buf, (int)sizeof(buf));
         if (n <= 0) break;
@@ -2364,16 +2348,12 @@ static bool read_http_request(struct io* io, std::string& out) {
             if (pos != std::string::npos) {
                 hdr_end = pos + 4;
                 content_len = parse_content_length(out, hdr_end);
-				if (content_len < 0 || (size_t)content_len > kMaxRequestSize) return false;
                 if ((int)(out.size() - hdr_end) >= content_len) return true;
                 if (content_len <= 0) return true;
             }
         } else if ((int)(out.size() - hdr_end) >= content_len) return true;
     }
-
-    if (hdr_end == std::string::npos) return false;
-    if (content_len <= 0) return true;
-    return ((int)(out.size() - hdr_end) >= content_len);
+    return !out.empty();
 }
 
 static std::string request_header_value(const std::string& req, const char* key) {
@@ -2807,6 +2787,50 @@ static void api_active(struct io* io){
     http_send(200, "OK", "application/json", out, io); free(out);
 }
 
+static void api_openbridge(struct io* io){
+    char* out = (char*)malloc(32768);
+    char* p = out; size_t left = 32768;
+    appendf(&p, &left, "[");
+
+    int first = 1;
+    dword now = g_sec ? g_sec : (dword)time(NULL);
+    int idx = 0;
+
+    for (auto& ob : g_obp_peers) {
+        ++idx;
+        std::string resolved = my_inet_ntoa(ob.addr.sin_addr);
+        const char* status = "idle";
+        if ((int)(now - ob.last_rx_sec) < 60 || (int)(now - ob.last_tx_sec) < 60) status = "active";
+        else if (resolved == "0.0.0.0") status = "unresolved";
+
+        appendf(&p, &left,
+            "%s{\"name\":\"OpenBridge%d\",\"enabled\":1,\"localPort\":%d,\"targetHost\":\"%s\",\"targetPort\":%d,\"networkId\":%u,\"lastRxSec\":%u,\"lastTxSec\":%u,\"lastPingSec\":%u,\"secondsSinceRx\":%u,\"secondsSinceTx\":%u,\"resolvedIp\":\"%s\",\"enhanced\":%d,\"permitAll\":%d,\"permitTGs\":\"%s\",\"status\":\"%s\"}",
+            first ? "" : ",",
+            idx,
+            ob.local_port,
+            json_escape(ob.target_host).c_str(),
+            ob.target_port,
+            (unsigned)ob.network_id,
+            (unsigned)ob.last_rx_sec,
+            (unsigned)ob.last_tx_sec,
+            (unsigned)ob.last_ping_sec,
+            (unsigned)((now > ob.last_rx_sec) ? (now - ob.last_rx_sec) : 0),
+            (unsigned)((now > ob.last_tx_sec) ? (now - ob.last_tx_sec) : 0),
+            json_escape(resolved).c_str(),
+            ob.enhanced ? 1 : 0,
+            ob.permit_all ? 1 : 0,
+            json_escape(ob.permit_tgs).c_str(),
+            status);
+
+        first = 0;
+        if (left < 512) break;
+    }
+
+    appendf(&p, &left, "]");
+    http_send(200, "OK", "application/json", out, io);
+    free(out);
+}
+
 static void api_stat(struct io* io){
     char buf[65536]; int n = fetch_stat(buf, sizeof(buf));
     if (n < 0) { http_send(502, "Bad Gateway", "text/plain", "no /STAT reply", io); return; }
@@ -2826,6 +2850,7 @@ static void handle_client(struct io* io){
     else if (strncmp(path, "/api/register", 13)==0) { api_register(io, method, body); io_close(io); return; }
     else if (strncmp(path, "/api/config", 11)==0)   { api_config(io); io_close(io); return; }
     else if (strncmp(path, "/api/active", 11)==0)   { api_active(io); io_close(io); return; }
+    else if (strncmp(path, "/api/openbridge", 15)==0) { api_openbridge(io); io_close(io); return; }
     else if (strncmp(path, "/api/stat", 9)==0)      { api_stat(io); io_close(io); return; }
     else if (strncmp(path, "/api/log", 8)==0)       { api_log(io, path); io_close(io); return; }
     if (serve_static(io, path)) { io_close(io); return; }
@@ -2861,10 +2886,7 @@ static void* monitor_thread(void* lp){ (void)lp;
 #endif
     ){
         struct sockaddr_in ca; socklen_t calen=sizeof(ca); sock_t c=accept(s,(struct sockaddr*)&ca,&calen);
-        if (c==SOCK_INVALID) continue;
-        struct io io={c};
-        io_set_timeouts(&io, 5000);
-        handle_client(&io);
+        if (c==SOCK_INVALID) continue; struct io io={c}; handle_client(&io);
     }
 #ifdef _WIN32
     return 0;
@@ -2918,7 +2940,7 @@ void obp_load_extra_from_config(config_file& c) {
     const char* secs[] = {"OpenBridge1","OpenBridge2","OpenBridge3"};
     int fallback = obp_local_port;
 
-    for (int i=0;i<2;i++) {
+    for (int i=0;i<3;i++) {
         ob_peer p;
         obp_fill_from_section(p, c, secs[i], fallback + (i+1));
         if (p.enabled && p.target_host[0])
