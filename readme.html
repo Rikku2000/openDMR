@@ -222,6 +222,7 @@
         <div class="group">
           <h4>Build & Deploy</h4>
           <a href="#build">Build & Install</a>
+          <a href="#deploy">Deployment Layout</a>
           <a href="#config">Configuration Reference</a>
           <a href="#defaults">Defaults & Constants</a>
         </div>
@@ -236,6 +237,8 @@
         </div>
         <div class="group">
           <h4>Usage</h4>
+          <a href="#openbridge">OpenBridge</a>
+          <a href="#webmon">Web Monitor & API</a>
           <a href="#runtime">Runtime & CLI</a>
           <a href="#logging">Logging</a>
           <a href="#faq">FAQ</a>
@@ -260,7 +263,7 @@
           routes talkgroups, authenticates nodes, and optionally integrates APRS, DMR-SMS, and SQLite logging.
           It is built around a compact core with a focus on performance and clarity.
         </p>
-        <div class="callout ok"><strong>Highlights:</strong> UDP networking, SHA-256 authentication, Parrot echo TG, APRS/SMS modules, SQLite logging, Linux/Windows support.</div>
+        <div class="callout ok"><strong>Highlights:</strong> UDP networking, SHA-256 authentication, Parrot echo TG, APRS/SMS modules, SQLite logging, embedded web dashboard/monitor, OpenBridge peers, Linux/Windows support.</div>
       </section>
 
       <section id="features" class="card">
@@ -279,7 +282,10 @@
             <ul>
               <li>Optional DMR-SMS: frame buffering and UDP emission</li>
               <li>Optional SQLite3: activity & transmission logs</li>
-              <li>Colorized console logging</li>
+              <li>Embedded HTTP monitor with dashboard, live status, and JSON API</li>
+              <li>Self-service web registration, login, and profile updates backed by auth and DMR IDs files</li>
+              <li>Up to 3 OpenBridge peers with TG filters, aliasing, DNS refresh, and optional enhanced HMAC</li>
+              <li>Radio blacklist support and DMRIds name/callsign lookup</li>
               <li>INI configuration parser included</li>
               <li>Cross-platform (Linux / Windows)</li>
             </ul>
@@ -289,20 +295,21 @@
 
       <section id="quickstart" class="card">
         <h2>Quick Start</h2>
-        <h3>Linux</h3>
-        <pre><span class="copy" data-copy="#qs1">Copy</span><code id="qs1">g++ -O2 -std=c++17 server.cpp -o dmr -lpthread
-./dmr</code></pre>
-        <h3>Linux with SQLite & APRS</h3>
-        <pre><span class="copy" data-copy="#qs2">Copy</span><code id="qs2">g++ -O2 -std=c++17 server.cpp -o dmr -DUSE_SQLITE3 -DHAVE_APRS -lsqlite3 -lpthread
-./dmr</code></pre>
+        <h3>Linux (full feature build)</h3>
+        <pre><span class="copy" data-copy="#qs1">Copy</span><code id="qs1">make
+./server</code></pre>
+        <h3>Linux (manual compile)</h3>
+        <pre><span class="copy" data-copy="#qs2">Copy</span><code id="qs2">g++ server.cpp -o server   -DUSE_SQLITE3 -DUSE_OPENSSL -DHAVE_APRS -DHAVE_SMS -DHAVE_HTTPMODE   -lsqlite3 -lcrypto -lssl -lpthread
+./server</code></pre>
         <h3>Windows (MinGW)</h3>
-        <pre><span class="copy" data-copy="#qs3">Copy</span><code id="qs3">g++ -O2 -std=c++17 server.cpp -lws2_32 -o dmr.exe
-dmr.exe</code></pre>
+        <pre><span class="copy" data-copy="#qs3">Copy</span><code id="qs3">build_mingw.bat
+content\server.exe</code></pre>
+        <div class="callout warn"><strong>Note:</strong> The current package ships a web UI under <code>content/www</code> and expects <code>dmr.conf</code>, <code>auth_users.csv</code>, <code>talkgroup.dat</code>, <code>banned.dat</code>, and optional <code>www/DMRIds.dat</code> in the runtime directory.</div>
       </section>
 
       <section id="diagram" class="card">
         <h2>Architecture</h2>
-        <p>The core is an event-driven UDP loop with light worker threads for timing and parrot playback; APRS and SMS are optional sub-systems.</p>
+        <p>The core is an event-driven UDP loop with light worker threads for timing and parrot playback; APRS, SMS, OpenBridge, and the embedded HTTP monitor are optional sub-systems layered around the same server state.</p>
         <div id="svgwrap" style="background:var(--panel-2); border:1px solid var(--border); border-radius:12px; padding:10px;">
           <svg id="diagramSVG" width="100%" height="280" viewBox="0 0 900 280"></svg>
         </div>
@@ -324,51 +331,131 @@ dmr.exe</code></pre>
         <pre><code>g++ -O2 -std=c++17 server.cpp -o dmr -DUSE_SQLITE3 -DHAVE_APRS -DHAVE_SMS -lsqlite3 -lpthread</code></pre>
       </section>
 
+      </section>
+
+      <section id="deploy" class="card">
+        <h2>Deployment Layout</h2>
+        <p>The current server bundle is structured for a runnable deployment, not just source-only builds.</p>
+        <table>
+          <tr><th>Path</th><th>Purpose</th></tr>
+          <tr><td><code>server.cpp</code> / <code>server.h</code></td><td>Main server implementation and declarations</td></tr>
+          <tr><td><code>Makefile</code> / <code>Makefile.mingw</code></td><td>Linux and MinGW build recipes with SQLite, OpenSSL, APRS, SMS, and HTTP monitor enabled</td></tr>
+          <tr><td><code>content/dmr.conf</code></td><td>Primary runtime configuration file</td></tr>
+          <tr><td><code>content/auth_users.csv</code></td><td>DMR-ID to password database for repeater auth and web login</td></tr>
+          <tr><td><code>content/talkgroup.dat</code></td><td>Talkgroup definitions / labels used by the server UI and status output</td></tr>
+          <tr><td><code>content/banned.dat</code></td><td>Blocked radio IDs loaded at runtime</td></tr>
+          <tr><td><code>content/www/</code></td><td>Embedded web dashboard assets: dashboard, monitor, OpenBridge, register, and profile pages</td></tr>
+          <tr><td><code>content/log.sqlite</code></td><td>SQLite activity database created/used when compiled with <code>USE_SQLITE3</code></td></tr>
+          <tr><td><code>content/server.exe</code></td><td>Prebuilt Windows binary with companion DLLs in the same folder</td></tr>
+        </table>
+      </section>
+
       <section id="config" class="card">
         <h2>Configuration Reference</h2>
-        <p>openDMR ships a minimal INI parser (<code>config_file</code>) supporting <em>[sections]</em> and <em>key=value</em> pairs. Boolean values accept: <code>on/off</code>, <code>true/false</code>, <code>yes/no</code>.</p>
+        <p>openDMR uses an INI-style <code>dmr.conf</code> with <em>[sections]</em> and <em>key=value</em> pairs. Current packaged defaults come from <code>content/dmr.conf</code>.</p>
         <div class="grid">
           <div class="col-6">
+            <h3>[General]</h3>
+            <table>
+              <tr><th>Key</th><th>Description</th><th>Default</th></tr>
+              <tr><td>Debug</td><td>Enable verbose console logging</td><td><code>1</code> in sample config</td></tr>
+            </table>
+
             <h3>[Server]</h3>
             <table>
               <tr><th>Key</th><th>Description</th><th>Default</th></tr>
-              <tr><td>Port</td><td>UDP server port</td><td><code>62031</code></td></tr>
-              <tr><td>Password</td><td>Global network password</td><td>—</td></tr>
-              <tr><td>Debug</td><td>Verbose logging</td><td><code>0</code></td></tr>
+              <tr><td>Host</td><td>Bind / advertised host string used by the server</td><td><code>0.0.0.0</code> in sample config</td></tr>
+              <tr><td>Port</td><td>Main UDP server port</td><td><code>62031</code></td></tr>
+              <tr><td>Password</td><td>Global network password</td><td><code>passw0rd</code> in sample config</td></tr>
+              <tr><td>Housekeeping</td><td>Housekeeping interval in minutes</td><td><code>1</code></td></tr>
             </table>
-            <h3>[Auth]</h3>
+
+            <h3>[Homebrew]</h3>
             <table>
               <tr><th>Key</th><th>Description</th><th>Default</th></tr>
-              <tr><td>Enabled</td><td>Enable per-node authorization</td><td><code>0</code></td></tr>
-              <tr><td>File</td><td>Authorization file path</td><td>—</td></tr>
-              <tr><td>ReloadSecs</td><td>Hot-reload interval</td><td>—</td></tr>
-              <tr><td>UnknownDefault</td><td>Policy for unknown nodes (1=allow,0=deny)</td><td><code>0</code></td></tr>
+              <tr><td>KeepNodesAlive</td><td>Whether idle nodes are retained / refreshed</td><td><code>1</code></td></tr>
+              <tr><td>NodeTimeout</td><td>Seconds before a node is considered stale</td><td><code>1800</code> in sample config</td></tr>
+              <tr><td>RelaxIPChange</td><td>Allow node IP changes without hard rejection</td><td><code>1</code></td></tr>
+            </table>
+
+            <h3>[Monitor]</h3>
+            <table>
+              <tr><th>Key</th><th>Description</th><th>Default</th></tr>
+              <tr><td>Enable</td><td>Enable embedded HTTP monitor/UI</td><td><code>1</code> in sample config</td></tr>
+              <tr><td>Port</td><td>HTTP port for dashboard and API</td><td><code>8080</code></td></tr>
+              <tr><td>Root</td><td>Document root for static web assets</td><td><code>www</code></td></tr>
+            </table>
+
+            <h3>[File]</h3>
+            <table>
+              <tr><th>Key</th><th>Description</th><th>Default</th></tr>
+              <tr><td>Auth</td><td>CSV auth database path</td><td><code>auth_users.csv</code></td></tr>
+              <tr><td>DMRIds</td><td>DMR-ID profile database used by web registration/profile</td><td><code>www/DMRIds.dat</code> in sample config</td></tr>
+              <tr><td>Log</td><td>SQLite log database path</td><td><code>log.sqlite</code></td></tr>
+              <tr><td>Talkgroup</td><td>Talkgroup list / alias file</td><td><code>talkgroup.dat</code></td></tr>
+              <tr><td>Banned</td><td>Blocked radio ID list</td><td><code>banned.dat</code></td></tr>
             </table>
           </div>
           <div class="col-6">
+            <h3>[DMR]</h3>
+            <table>
+              <tr><th>Key</th><th>Description</th><th>Default</th></tr>
+              <tr><td>Scanner</td><td>Scanner talkgroup</td><td><code>777</code></td></tr>
+              <tr><td>Parrot</td><td>Parrot / echo talkgroup</td><td><code>9990</code></td></tr>
+              <tr><td>APRS</td><td>APRS trigger talkgroup</td><td><code>900999</code></td></tr>
+            </table>
+
+            <h3>[Auth]</h3>
+            <table>
+              <tr><th>Key</th><th>Description</th><th>Default</th></tr>
+              <tr><td>Enable</td><td>Enable auth-backed login and node policy</td><td><code>1</code> in sample config</td></tr>
+              <tr><td>Reload</td><td>Reload interval for auth file, in seconds</td><td><code>60</code></td></tr>
+              <tr><td>UnknownPolicy</td><td>Policy for unknown IDs (1=allow, 0=deny)</td><td><code>0</code></td></tr>
+            </table>
+
+            <h3>[OpenBridge1..3]</h3>
+            <table>
+              <tr><th>Key</th><th>Description</th><th>Default</th></tr>
+              <tr><td>Enable</td><td>Enable this OpenBridge peer</td><td><code>0</code> in sample config</td></tr>
+              <tr><td>Alias</td><td>Friendly display name in the web UI</td><td>Optional</td></tr>
+              <tr><td>LocalPort</td><td>Local UDP port for the peer</td><td>Falls back from <code>62044</code> upward</td></tr>
+              <tr><td>TargetHost</td><td>Remote OpenBridge hostname/IP</td><td>—</td></tr>
+              <tr><td>TargetPort</td><td>Remote OpenBridge UDP port</td><td><code>62044</code></td></tr>
+              <tr><td>NetworkID</td><td>Remote bridge network identifier</td><td>Optional</td></tr>
+              <tr><td>Password</td><td>Peer secret for pings / optional HMAC</td><td>—</td></tr>
+              <tr><td>ForceSlot1</td><td>Rewrite inbound sloting to TS1</td><td><code>0</code></td></tr>
+              <tr><td>PermitAll</td><td>Allow all talkgroups</td><td><code>1</code></td></tr>
+              <tr><td>PermitTGs</td><td>CSV allow-list used when <code>PermitAll=0</code></td><td>—</td></tr>
+              <tr><td>EnhancedOBP</td><td>Enable HMAC-based enhanced OpenBridge packets</td><td><code>0</code></td></tr>
+              <tr><td>RelaxChecks</td><td>Accept packets with relaxed validation</td><td><code>0</code></td></tr>
+              <tr><td>ResolveInterval</td><td>Seconds between DNS refresh attempts</td><td>Configurable</td></tr>
+            </table>
+
             <h3>[APRS]</h3>
             <table>
               <tr><th>Key</th><th>Description</th><th>Default</th></tr>
-              <tr><td>Enabled</td><td>Enable APRS module</td><td><code>0</code></td></tr>
-              <tr><td>ServerHost</td><td>APRS-IS host</td><td>—</td></tr>
-              <tr><td>ServerPort</td><td>APRS-IS port</td><td><code>14580</code></td></tr>
-              <tr><td>Callsign</td><td>APRS callsign</td><td>—</td></tr>
-              <tr><td>Passcode</td><td>APRS passcode</td><td>—</td></tr>
-              <tr><td>Filter</td><td>APRS filter string</td><td><code>m/0</code></td></tr>
-              <tr><td>KeepAliveSecs</td><td>APRS keepalive cadence</td><td>—</td></tr>
-              <tr><td>ReconnectSecs</td><td>Reconnect cadence</td><td>—</td></tr>
+              <tr><td>Enable</td><td>Enable APRS client</td><td><code>1</code> in sample config</td></tr>
+              <tr><td>Server</td><td>APRS-IS host</td><td><code>0.0.0.0</code> in sample config</td></tr>
+              <tr><td>Port</td><td>APRS-IS port</td><td><code>14580</code></td></tr>
+              <tr><td>Callsign</td><td>APRS login callsign</td><td><code>N0CALL</code> in sample config</td></tr>
+              <tr><td>Passcode</td><td>APRS passcode</td><td>Required</td></tr>
+              <tr><td>Filter</td><td>Server-side APRS filter string</td><td><code>r/0/0/0</code> in sample config</td></tr>
+              <tr><td>Keepalive</td><td>Keepalive cadence in seconds</td><td><code>60</code></td></tr>
+              <tr><td>Reconnect</td><td>Reconnect cadence in seconds</td><td><code>30</code></td></tr>
+              <tr><td>IdMap</td><td>DMRID to callsign CSV map</td><td><code>aprs_map.csv</code></td></tr>
             </table>
 
             <h3>[SMS]</h3>
             <table>
               <tr><th>Key</th><th>Description</th><th>Default</th></tr>
-              <tr><td>Enabled</td><td>Enable DMR-SMS module</td><td><code>0</code></td></tr>
-              <tr><td>UdpHost</td><td>SMS UDP target host</td><td>—</td></tr>
-              <tr><td>UdpPort</td><td>SMS UDP target port</td><td>—</td></tr>
+              <tr><td>Enable</td><td>Enable DMR-SMS forwarding</td><td><code>1</code> in sample config</td></tr>
+              <tr><td>UDPHost</td><td>SMS UDP target host</td><td><code>127.0.0.1</code></td></tr>
+              <tr><td>UDPPort</td><td>SMS UDP target port</td><td><code>5555</code></td></tr>
               <tr><td>AllowPrivate</td><td>Permit private SMS</td><td><code>1</code></td></tr>
-              <tr><td>PermitTGs</td><td>CSV of permitted TGs</td><td>—</td></tr>
-              <tr><td>MaxFrames</td><td>Frame limit per message</td><td>—</td></tr>
-              <tr><td>MaxSeconds</td><td>Time window per message</td><td>—</td></tr>
+              <tr><td>PermitAll</td><td>Allow all TG destinations for group SMS</td><td><code>1</code> in sample config</td></tr>
+              <tr><td>PermitTGs</td><td>CSV talkgroup allow-list</td><td><code>900999</code> in sample config</td></tr>
+              <tr><td>MaxFrames</td><td>Maximum frames per message</td><td><code>30</code></td></tr>
+              <tr><td>MaxSeconds</td><td>Maximum buffering window in seconds</td><td><code>5</code></td></tr>
             </table>
           </div>
         </div>
@@ -378,15 +465,21 @@ dmr.exe</code></pre>
         <h2>Defaults & Constants</h2>
         <table>
           <tr><th>Symbol</th><th>Value</th><th>Description</th></tr>
-          <tr><td><code>DEFAULT_PORT</code></td><td><code>62031</code></td><td>Main UDP port</td></tr>
+          <tr><td><code>DEFAULT_PORT</code></td><td><code>62031</code></td><td>Main DMR UDP port</td></tr>
+          <tr><td><code>DEFAULT_HOUSEKEEPING_MINUTES</code></td><td><code>1</code></td><td>Default housekeeping cadence</td></tr>
           <tr><td><code>LOW_DMRID</code></td><td><code>1000000</code></td><td>Lower user ID bound</td></tr>
           <tr><td><code>HIGH_DMRID</code></td><td><code>8000000</code></td><td>Upper user ID bound</td></tr>
           <tr><td><code>UNSUBSCRIBE_ALL_TG</code></td><td><code>4000</code></td><td>Unsubscribe control TG</td></tr>
           <tr><td><code>g_scanner_tg</code></td><td><code>777</code></td><td>Scanner group</td></tr>
           <tr><td><code>g_parrot_tg</code></td><td><code>9990</code></td><td>Parrot echo group</td></tr>
           <tr><td><code>g_aprs_tg</code></td><td><code>900999</code></td><td>APRS heard trigger</td></tr>
-          <tr><td><code>DMRD_TOTAL_NO_HMAC</code></td><td><code>55</code></td><td>Size of DMRD frame sans HMAC</td></tr>
-          <tr><td><code>DMRD_TOTAL_WITH_HMAC</code></td><td><code>75</code></td><td>Size of DMRD frame with HMAC</td></tr>
+          <tr><td><code>G.port</code></td><td><code>8080</code></td><td>Embedded monitor default HTTP port</td></tr>
+          <tr><td><code>WEB_SESSION_TTL</code></td><td><code>86400</code></td><td>Web login session lifetime in seconds (24h)</td></tr>
+          <tr><td><code>obp_local_port</code></td><td><code>62044</code></td><td>OpenBridge base local port</td></tr>
+          <tr><td><code>obp_remote_port</code></td><td><code>62044</code></td><td>OpenBridge default remote port</td></tr>
+          <tr><td><code>DMRD_TOTAL_NO_HMAC</code></td><td><code>55</code></td><td>Size of classic DMRD frame</td></tr>
+          <tr><td><code>DMRD_TOTAL_WITH_HMAC</code></td><td><code>75</code></td><td>Enhanced OpenBridge DMRD size with SHA1 HMAC trailer</td></tr>
+          <tr><td><code>MAX_BANNED_SIZE</code></td><td><code>16384</code></td><td>Maximum in-memory banned radio IDs</td></tr>
         </table>
       </section>
 
@@ -537,29 +630,109 @@ dmr.exe</code></pre>
         </table>
       </section>
 
+      <section id="openbridge" class="card">
+        <h2>OpenBridge</h2>
+        <p>The server now supports multiple outbound/inbound OpenBridge peers. Each enabled peer keeps its own socket, target resolution state, last RX/TX timers, optional HMAC mode, and talkgroup filtering policy.</p>
+        <div class="grid">
+          <div class="col-6">
+            <h3>Capabilities</h3>
+            <ul>
+              <li>Up to 3 peers via <code>[OpenBridge1]</code> .. <code>[OpenBridge3]</code></li>
+              <li>Per-peer TG allow-list with <code>PermitAll</code> / <code>PermitTGs</code></li>
+              <li>Friendly alias names surfaced in the monitor UI</li>
+              <li>Periodic DNS re-resolution for hostnames</li>
+              <li>Optional enhanced OpenBridge mode with HMAC validation/signing when built with <code>USE_OPENSSL</code></li>
+              <li>Optional relaxed packet checks for interoperability testing</li>
+            </ul>
+          </div>
+          <div class="col-6">
+            <h3>Status exposed by web API</h3>
+            <ul>
+              <li>Peer name / alias</li>
+              <li>Resolved IP and remote target</li>
+              <li>Network ID</li>
+              <li>Last RX / TX / ping ages</li>
+              <li>Enhanced mode flag</li>
+              <li>Current permit policy</li>
+            </ul>
+          </div>
+        </div>
+        <pre><code>[OpenBridge1]
+Enable=1
+Alias=Backbone-East
+TargetHost=bridge.example.net
+TargetPort=62044
+NetworkID=1234
+Password=secret
+PermitAll=0
+PermitTGs=91,92,93
+EnhancedOBP=1
+RelaxChecks=0</code></pre>
+      </section>
+
+      <section id="webmon" class="card">
+        <h2>Web Monitor & API</h2>
+        <p>When compiled with <code>HAVE_HTTPMODE</code> and enabled in <code>[Monitor]</code>, openDMR serves a static web UI and several JSON endpoints from the configured document root.</p>
+        <h3>Included pages</h3>
+        <ul>
+          <li><code>index.html</code>: dashboard with active calls, recent log data, and summary metrics</li>
+          <li><code>monitor.html</code>: raw <code>/STAT</code> monitor view</li>
+          <li><code>openbridge.html</code>: peer health and bridge status</li>
+          <li><code>register.html</code>: self-service account registration</li>
+          <li><code>profile.html</code>: authenticated profile and password update page</li>
+        </ul>
+        <h3>HTTP API</h3>
+        <table>
+          <tr><th>Endpoint</th><th>Method</th><th>Description</th></tr>
+          <tr><td><code>/api/config</code></td><td>GET</td><td>Returns auth / registration capability flags and configured DMR IDs file</td></tr>
+          <tr><td><code>/api/login</code></td><td>POST</td><td>Authenticate with DMR-ID and password, returns a session token</td></tr>
+          <tr><td><code>/api/logout</code></td><td>POST</td><td>Invalidate the current session token</td></tr>
+          <tr><td><code>/api/profile</code></td><td>GET / POST</td><td>Read or update stored profile name and password</td></tr>
+          <tr><td><code>/api/register</code></td><td>POST</td><td>Create a new auth + DMRIds entry when registration is enabled</td></tr>
+          <tr><td><code>/api/active</code></td><td>GET</td><td>Current active transmissions from SQLite log state</td></tr>
+          <tr><td><code>/api/log?limit=20</code></td><td>GET</td><td>Recent call history from the log database</td></tr>
+          <tr><td><code>/api/openbridge</code></td><td>GET</td><td>OpenBridge peer health and timing data</td></tr>
+          <tr><td><code>/api/stat</code></td><td>GET</td><td>Proxies the local <code>/STAT</code> UDP output for browser display</td></tr>
+        </table>
+        <div class="callout"><strong>Auth model:</strong> sessions are bearer-style tokens kept in memory and refreshed on each valid request. The current implementation uses a 24-hour TTL.</div>
+      </section>
+
       <section id="runtime" class="card">
         <h2>Runtime & CLI</h2>
-        <pre><code># start
-./dmr
+        <pre><code># start from packaged content directory
+./server
 
 # local status (UDP)
-echo "/STAT" | nc -u 127.0.0.1 62031</code></pre>
+echo "/STAT" | nc -u 127.0.0.1 62031
+
+# browse monitor
+http://127.0.0.1:8080/
+http://127.0.0.1:8080/openbridge.html</code></pre>
+        <p>The binary accepts <code>--help</code>. With SQLite enabled, the server auto-creates the <code>LOG</code> table if needed and the web UI polls the JSON endpoints roughly every 3 seconds.</p>
       </section>
 
       <section id="logging" class="card">
         <h2>Logging</h2>
-        <p>Console logs use colored levels via <code>logmsg(level, timed, ...)</code> (Linux ANSI / Windows Console API). SQLite logging (if enabled) writes to a <code>LOG</code> table with columns such as <em>DATE, RADIO, TG, SLOT, NODE, ACTIVE, CONNECT, TIME</em>.</p>
+        <p>Console logs use colored levels via <code>logmsg(level, timed, ...)</code> (Linux ANSI / Windows Console API). SQLite logging writes to a <code>LOG</code> table with columns <em>DATE, RADIO, TG, TIME, SLOT, NODE, ACTIVE, CONNECT</em>. The HTTP dashboard and monitor pages read from this same runtime state and database to render active calls, recent traffic, and OpenBridge health.</p>
       </section>
 
       <section id="faq" class="card">
         <h2>FAQ</h2>
         <details open>
           <summary>What happens when a node sends to an unknown TG?</summary>
-          <p>The server creates the talkgroup on demand and subscribes the slot if requested via config; otherwise keyup on a non-existent group logs a notice and the slot is unsubscribed.</p>
+          <p>The server creates the talkgroup on demand. The slot can then be routed locally, forwarded to OpenBridge peers if permitted, and surfaced in the monitor/log views.</p>
         </details>
         <details>
           <summary>How are private calls routed?</summary>
-          <p>If the destination is a radio ID within range and present in the node index, the frame is forwarded to that radio's last seen slot, with the slot bit adjusted.</p>
+          <p>If the destination is a radio ID within range and present in the node index, the frame is forwarded to that radio&apos;s last seen slot, with the slot bit adjusted. SMS forwarding can also allow private messages when <code>AllowPrivate=1</code>.</p>
+        </details>
+        <details>
+          <summary>What does the embedded web server need?</summary>
+          <p>Build with <code>HAVE_HTTPMODE</code>, set <code>[Monitor] Enable=1</code>, and make sure the configured <code>Root</code> directory contains the bundled <code>www</code> assets.</p>
+        </details>
+        <details>
+          <summary>How does registration/profile storage work?</summary>
+          <p>Registration adds entries to both the auth CSV and the configured <code>DMRIds</code> data file. Profile updates can change the display name and password for an authenticated DMR-ID.</p>
         </details>
         <details>
           <summary>How does Parrot work?</summary>
@@ -702,15 +875,17 @@ echo "/STAT" | nc -u 127.0.0.1 62031</code></pre>
     rect(40, 50, 200, 70, 10, 'DMR Repeaters');
     rect(350, 40, 200, 90, 10, 'openDMR Core\nUDP Loop');
     rect(350, 150, 200, 60, 10, 'Talkgroups & Index');
-    rect(660, 40, 200, 60, 10, 'APRS (opt)');
-    rect(660, 120, 200, 60, 10, 'DMR-SMS (opt)');
-    rect(660, 200, 200, 60, 10, 'SQLite (opt)');
+    rect(660, 20, 200, 50, 10, 'APRS (opt)');
+    rect(660, 85, 200, 50, 10, 'DMR-SMS (opt)');
+    rect(660, 150, 200, 50, 10, 'HTTP Monitor (opt)');
+    rect(660, 215, 200, 45, 10, 'SQLite / Web API');
 
     arrow(240, 85, 350, 85, 'DMRD / RPT*');
     arrow(450, 130, 450, 150, '');
-    arrow(550, 70, 660, 70, 'heard');
-    arrow(550, 150, 660, 150, 'SMS');
-    arrow(550, 210, 660, 210, 'logs');
+    arrow(550, 45, 660, 45, 'heard');
+    arrow(550, 110, 660, 110, 'SMS');
+    arrow(550, 175, 660, 175, 'status');
+    arrow(550, 235, 660, 235, 'logs / JSON');
   </script>
 </body>
 </html>
