@@ -549,7 +549,7 @@ async function renderOpenBridge() {
     setText('ob-table-meta', `${data.length} peer${data.length === 1 ? '' : 's'} loaded`);
     setText('ob-hero-status', active.length ? 'Bridge active' : 'Bridge idle');
     setChipTone('ob-hero-status', active.length ? '' : 'soft');
-    setText('ob-hero-summary', data.map((row) => `${row.aliasName || row.name} → ${row.targetHost}:${row.targetPort}`).join(' · '));
+    setText('ob-hero-summary', data.map((row) => `${row.aliasName || row.name} → ${row.targetHost}`).join(' · '));
   } catch (error) {
     console.error('openbridge:', error);
     tbody.innerHTML = '';
