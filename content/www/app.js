@@ -498,7 +498,7 @@ async function renderOpenBridge() {
     if (!data.length) {
       const tr = document.createElement('tr');
       const cell = document.createElement('td');
-      cell.colSpan = 10;
+      cell.colSpan = 11;
       cell.textContent = 'No enabled OpenBridge peers configured';
       tr.append(cell);
       tbody.append(tr);
@@ -519,14 +519,12 @@ async function renderOpenBridge() {
 
     data.forEach((row) => {
       const tr = document.createElement('tr');
-      tr.append(td(row.name || 'OpenBridge'));
+      tr.append(td(row.aliasName || '—', row.aliasName ? 'emphasis' : ''));
       const statusCell = td('');
       statusCell.append(statusBadge(row.status));
       tr.append(statusCell);
-      tr.append(td(`${row.targetHost || '—'}:${row.targetPort ?? '—'}`, 'emphasis'));
-      tr.append(td(row.resolvedIp || '—'));
-      tr.append(td(row.localPort ?? '—', 'numeric'));
-      tr.append(td(row.networkId ?? '—', 'numeric'));
+      tr.append(td(row.targetHost || '—', row.targetHost ? 'emphasis' : ''));
+      tr.append(td(row.networkId || '—'));
       tr.append(td(row.enhanced ? 'YES' : 'NO'));
       tr.append(td(row.permitAll ? 'ALL' : (row.permitTGs || '—')));
       tr.append(td(formatSince(row.secondsSinceRx)));
@@ -537,30 +535,32 @@ async function renderOpenBridge() {
     const active = data.filter((row) => row.status === 'active');
     const latestRx = [...data].sort((a, b) => (a.secondsSinceRx ?? 999999) - (b.secondsSinceRx ?? 999999))[0];
     const latestTx = [...data].sort((a, b) => (a.secondsSinceTx ?? 999999) - (b.secondsSinceTx ?? 999999))[0];
+    const peerNames = data.map((row) => row.aliasName || row.targetHost || row.name).filter(Boolean);
+    const activeNames = active.map((row) => row.aliasName || row.targetHost || row.name).filter(Boolean);
 
     setText('ob-metric-total', String(data.length));
-    setText('ob-metric-total-sub', data.map((row) => row.name).join(', '));
+    setText('ob-metric-total-sub', peerNames.join(', '));
     setText('ob-metric-active', String(active.length));
-    setText('ob-metric-active-sub', active.length ? active.map((row) => row.name).join(', ') : 'No peer active in the last 60s');
-    setText('ob-metric-rx', latestRx ? (latestRx.name || '—') : '—');
+    setText('ob-metric-active-sub', active.length ? activeNames.join(', ') : 'No peer active in the last 60s');
+    setText('ob-metric-rx', latestRx ? (latestRx.aliasName || latestRx.name || '—') : '—');
     setText('ob-metric-rx-sub', latestRx ? `${formatSince(latestRx.secondsSinceRx)} from ${latestRx.targetHost}:${latestRx.targetPort}` : 'Waiting for traffic');
-    setText('ob-metric-tx', latestTx ? (latestTx.name || '—') : '—');
+    setText('ob-metric-tx', latestTx ? (latestTx.aliasName || latestTx.name || '—') : '—');
     setText('ob-metric-tx-sub', latestTx ? `${formatSince(latestTx.secondsSinceTx)} to ${latestTx.targetHost}:${latestTx.targetPort}` : 'Waiting for traffic');
     setText('ob-table-meta', `${data.length} peer${data.length === 1 ? '' : 's'} loaded`);
     setText('ob-hero-status', active.length ? 'Bridge active' : 'Bridge idle');
     setChipTone('ob-hero-status', active.length ? '' : 'soft');
-    setText('ob-hero-summary', data.map((row) => `${row.name} → ${row.targetHost}:${row.targetPort}`).join(' · '));
+    setText('ob-hero-summary', data.map((row) => `${row.aliasName || row.name} → ${row.targetHost}:${row.targetPort}`).join(' · '));
   } catch (error) {
     console.error('openbridge:', error);
     tbody.innerHTML = '';
     const tr = document.createElement('tr');
     const cell = document.createElement('td');
-    cell.colSpan = 10;
+    cell.colSpan = 11;
     cell.textContent = 'Unable to load OpenBridge peers';
     tr.append(cell);
     tbody.append(tr);
-    setText('ob-table-meta', 'OpenBridge API request failed');
-    setText('ob-hero-status', 'API error');
+    setText('ob-table-meta', 'Request failed');
+    setText('ob-hero-status', 'Unavailable');
     setChipTone('ob-hero-status', 'bad');
     setText('ob-hero-summary', 'Check that server.cpp includes /api/openbridge and restart the server');
   }

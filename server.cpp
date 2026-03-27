@@ -2804,9 +2804,10 @@ static void api_openbridge(struct io* io){
         else if (resolved == "0.0.0.0") status = "unresolved";
 
         appendf(&p, &left,
-            "%s{\"name\":\"OpenBridge%d\",\"enabled\":1,\"localPort\":%d,\"targetHost\":\"%s\",\"targetPort\":%d,\"networkId\":%u,\"lastRxSec\":%u,\"lastTxSec\":%u,\"lastPingSec\":%u,\"secondsSinceRx\":%u,\"secondsSinceTx\":%u,\"resolvedIp\":\"%s\",\"enhanced\":%d,\"permitAll\":%d,\"permitTGs\":\"%s\",\"status\":\"%s\"}",
+            "%s{\"name\":\"OpenBridge%d\",\"aliasName\":\"%s\",\"enabled\":1,\"localPort\":%d,\"targetHost\":\"%s\",\"targetPort\":%d,\"networkId\":%u,\"lastRxSec\":%u,\"lastTxSec\":%u,\"lastPingSec\":%u,\"secondsSinceRx\":%u,\"secondsSinceTx\":%u,\"resolvedIp\":\"%s\",\"enhanced\":%d,\"permitAll\":%d,\"permitTGs\":\"%s\",\"status\":\"%s\"}",
             first ? "" : ",",
             idx,
+            json_escape(ob.alias_name).c_str(),
             ob.local_port,
             json_escape(ob.target_host).c_str(),
             ob.target_port,
@@ -2923,6 +2924,7 @@ static void obp_fill_from_section(ob_peer& p, config_file& c, const char* sec, i
     p.enabled = c.getint(sec, "Enable", 0) != 0;
     p.local_port = c.getint(sec, "Port", fallback_local_port);
     strcpy(p.target_host, c.getstring(sec, "TargetHost", "").c_str());
+    strcpy(p.alias_name, c.getstring(sec, "AliasName", "").c_str());
     p.target_port   = c.getint(sec, "TargetPort", 62044);
     p.network_id    = c.getint(sec, "NetworkId", 0);
     strcpy(p.pass,   c.getstring(sec, "Passphrase", "").c_str());
@@ -2979,6 +2981,7 @@ void obp_show_all() {
 		logmsg (LOG_GREEN, 0, "\n- OpenBridge%d Config\n\n", i);
 		logmsg (LOG_YELLOW, 0, "OB Local      : %d\n", p.local_port);
 		logmsg (LOG_YELLOW, 0, "OB Remote     : %s:%d\n", p.target_host, p.target_port);
+		logmsg (LOG_YELLOW, 0, "OB Alias      : %s\n", p.alias_name[0] ? p.alias_name : "(none)");
 		logmsg (LOG_YELLOW, 0, "OB NetId      : %u\n", p.network_id);
 		logmsg (LOG_YELLOW, 0, "OB Force TS1  : %s\n", p.force_slot1 ? "Yes" : "No");
 		logmsg (LOG_YELLOW, 0, "OB Permit All : %s\n", p.permit_all ? "Yes" : "No");

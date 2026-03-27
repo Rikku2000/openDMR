@@ -219,6 +219,7 @@ struct ob_peer {
     bool        enhanced;
     bool        relax_checks;
 	char  		target_host[256];
+	char        alias_name[128];
 	int   		target_port;
 	dword 		last_resolve_sec;
 	int   		resolve_interval;
