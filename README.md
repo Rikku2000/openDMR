@@ -474,10 +474,3 @@ Ensure compliance with local radio, DMR, and spectrum regulations.
 Full developer documentation, protocol details, config reference, architecture diagrams, and the expanded server notes are available in:
 
 - [`readme.html`](./readme.html)
-
----
-
-<p align="center">
-  <img src="https://img.shields.io/github/stars/openDMR/openDMR?style=social" alt="Stars">
-  <img src="https://img.shields.io/github/forks/openDMR/openDMR?style=social" alt="Forks">
-</p>
