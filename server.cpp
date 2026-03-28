@@ -2445,6 +2445,13 @@ static bool read_profile_for_dmrid(dword dmrid, std::string& callsign, std::stri
     return dmrids_read_profile(g_dmrids_file, dmrid, callsign, name, err);
 }
 
+static std::string callsign_json_for_radio(int radio) {
+    if (radio <= 0) return std::string();
+    std::string callsign, name, err;
+    if (!read_profile_for_dmrid((dword)radio, callsign, name, err)) return std::string();
+    return callsign;
+}
+
 static void api_config(struct io* io) {
     std::string body = std::string("{\"authEnabled\":") + (g_auth_enabled ? "1" : "0")
         + ",\"registrationEnabled\":" + (g_auth_enabled ? "1" : "0")
@@ -2735,13 +2742,14 @@ static void api_log(struct io* io, const char* path){
         int online= sqlite3_column_int(st, 9);
 		int src=0, aprs=0, sms=0;
 		mark_read(radio, &src, &aprs, &sms);
+        std::string callsign = callsign_json_for_radio(radio);
 
 		appendf(&p,&left,
-		  "%s{\"id\":%d,\"date\":\"%s\",\"radio\":%d,\"tg\":%d,\"slot\":%d,"
+		  "%s{\"id\":%d,\"date\":\"%s\",\"radio\":%d,\"callsign\":\"%s\",\"tg\":%d,\"slot\":%d,"
 		  "\"node\":%d,\"time\":%d,\"active\":%d,\"online\":%d,\"connect\":%d,"
 		  "\"src\":%d,\"aprs\":%d,\"sms\":%d}",
 		  first?"":",",
-		  id, date?(const char*)date:"", radio, tg, slot, node, sec, active, online, conn,
+		  id, date?(const char*)date:"", radio, json_escape(callsign).c_str(), tg, slot, node, sec, active, online, conn,
 		  src, aprs, sms);
 
         first = 0;
@@ -2774,11 +2782,12 @@ static void api_active(struct io* io){
             sec=sqlite3_column_int(st,5);
 		int src=0, aprs=0, sms=0;
 		mark_read(radio, &src, &aprs, &sms);
+        std::string callsign = callsign_json_for_radio(radio);
 
 		appendf(&p,&left,
-		  "%s{\"date\":\"%s\",\"radio\":%d,\"tg\":%d,\"slot\":%d,\"node\":%d,\"time\":%d,"
+		  "%s{\"date\":\"%s\",\"radio\":%d,\"callsign\":\"%s\",\"tg\":%d,\"slot\":%d,\"node\":%d,\"time\":%d,"
 		  "\"src\":%d,\"aprs\":%d,\"sms\":%d}",
-		  first?"":",", date?(const char*)date:"", radio, tg, slot, node, sec,
+		  first?"":",", date?(const char*)date:"", radio, json_escape(callsign).c_str(), tg, slot, node, sec,
 		  src, aprs, sms);
         first=0;
     }

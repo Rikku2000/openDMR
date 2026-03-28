@@ -462,6 +462,15 @@ function badgesFor(row) {
 }
 
 
+
+function formatRadio(row) {
+  if (!row) return '—';
+  const radio = row.radio ?? '—';
+  const callsign = (row.callsign || '').trim();
+  if (!callsign) return String(radio);
+  return `${radio} (${callsign})`;
+}
+
 function statusBadge(status) {
   const wrap = createEl('div', 'badge-stack');
   const map = {
@@ -594,7 +603,7 @@ async function renderActive() {
     data.forEach((row) => {
       const tr = document.createElement('tr');
       tr.append(td(row.date || '—'));
-      tr.append(td(row.radio ?? '—', 'emphasis'));
+      tr.append(td(formatRadio(row), 'emphasis'));
       const badgeCell = td('');
       badgeCell.append(badgesFor(row));
       tr.append(badgeCell);
@@ -607,11 +616,11 @@ async function renderActive() {
 
     const live = data[0];
     setText('metric-active', String(data.length));
-    setText('metric-active-sub', live ? `Latest radio ${live.radio}` : 'No live activity');
+    setText('metric-active-sub', live ? `Latest radio ${formatRadio(live)}` : 'No live activity');
     setText('active-meta', live ? `TG ${live.tg} · Slot ${live.slot}` : 'No active calls');
     setText('hero-status', 'Live traffic');
     setChipTone('hero-status', '');
-    setText('hero-summary', live ? `Radio ${live.radio} on TG ${live.tg}` : 'No active transmissions yet');
+    setText('hero-summary', live ? `${formatRadio(live)} on TG ${live.tg}` : 'No active transmissions yet');
     document.getElementById('active-panel')?.classList.add('is-live');
   } catch (error) {
     console.error('active:', error);
@@ -638,7 +647,7 @@ async function renderLog() {
         const tr = document.createElement('tr');
         tr.append(td(row.id ?? '—', 'numeric'));
         tr.append(td(row.date || '—'));
-        tr.append(td(row.radio ?? '—', 'emphasis'));
+        tr.append(td(formatRadio(row), 'emphasis'));
         const badgeCell = td('');
         badgeCell.append(badgesFor(row));
         tr.append(badgeCell);
