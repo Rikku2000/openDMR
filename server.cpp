@@ -1614,9 +1614,9 @@ bool show_running_status() {
 	addr.sin_family = AF_INET;
 	addr.sin_port = htons(g_udp_port);
 #ifdef WIN32
-	addr.sin_addr.S_un.S_addr = inet_addr("127.0.0.1");
+	addr.sin_addr.S_un.S_addr = inet_addr("0.0.0.0");
 #else
-	addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+	addr.sin_addr.s_addr = inet_addr("0.0.0.0");
 #endif
 
 	if (sendto (sock, "/STAT", 5, 0, (sockaddr*)&addr, sizeof(addr)) == -1) {
@@ -2124,6 +2124,23 @@ void sms_emit_udp(dword radioid, dword dest, bool is_private, sms_buf &sb)
 #ifdef HAVE_HTTPMODE
 static unsigned now_sec(void){ return (unsigned)time(NULL); }
 
+#ifdef _WIN32
+static CRITICAL_SECTION g_monitor_lock;
+static volatile LONG g_monitor_lock_init = 0;
+static void monitor_lock_init(void) {
+    if (InterlockedCompareExchange(&g_monitor_lock_init, 1, 0) == 0) {
+        InitializeCriticalSection(&g_monitor_lock);
+    }
+}
+#define MONITOR_LOCK()   EnterCriticalSection(&g_monitor_lock)
+#define MONITOR_UNLOCK() LeaveCriticalSection(&g_monitor_lock)
+#else
+static pthread_mutex_t g_monitor_lock = PTHREAD_MUTEX_INITIALIZER;
+static void monitor_lock_init(void) { }
+#define MONITOR_LOCK()   pthread_mutex_lock(&g_monitor_lock)
+#define MONITOR_UNLOCK() pthread_mutex_unlock(&g_monitor_lock)
+#endif
+
 static MonMark* mark_get_slot(int radio){
     if (radio <= 0) return NULL;
     unsigned h = (unsigned)radio * 2654435761u;
@@ -2136,8 +2153,13 @@ static MonMark* mark_get_slot(int radio){
 }
 
 void monitor_note_event(int radio, int tg, MonSrc src, int is_aprs, int is_sms){
+    monitor_lock_init();
+    MONITOR_LOCK();
     MonMark* m = mark_get_slot(radio);
-    if (!m) return;
+    if (!m) {
+        MONITOR_UNLOCK();
+        return;
+    }
     m->used = 1;
     m->radio = radio;
     if (tg>0) m->tg = tg;
@@ -2145,9 +2167,10 @@ void monitor_note_event(int radio, int tg, MonSrc src, int is_aprs, int is_sms){
     if (is_aprs>=0) m->aprs = is_aprs ? 1:0;
     if (is_sms>=0)  m->sms  = is_sms  ? 1:0;
     m->last_sec = now_sec();
+    MONITOR_UNLOCK();
 }
 
-static struct { char bind_ip[64]; int port; char doc_root[512]; } G = {"127.0.0.1", 8080, "www"};
+static struct { char bind_ip[64]; int port; char doc_root[512]; } G = {"0.0.0.0", 8080, "www"};
 #ifdef _WIN32
 static HANDLE g_thread = NULL; static volatile LONG g_run = 0; static sock_t g_listen = SOCK_INVALID;
 #else
@@ -2204,9 +2227,9 @@ static int fetch_stat(char* out, size_t cap) {
     struct sockaddr_in dst; memset(&dst,0,sizeof(dst));
     dst.sin_family = AF_INET; dst.sin_port = htons((uint16_t)g_udp_port);
 #ifdef _WIN32
-    InetPtonA(AF_INET, "127.0.0.1", &dst.sin_addr);
+    InetPtonA(AF_INET, "0.0.0.0", &dst.sin_addr);
 #else
-    inet_pton(AF_INET, "127.0.0.1", &dst.sin_addr);
+    inet_pton(AF_INET, "0.0.0.0", &dst.sin_addr);
 #endif
     const char* msg = "/STAT"; int mlen = 5;
     if (sendto(s, msg, mlen, 0, (struct sockaddr*)&dst, sizeof(dst)) < 0) { CLOSESOCK(s); return -1; }
@@ -2306,11 +2329,17 @@ static int serve_static(struct io* io, const char* url){
 
 static void mark_read(int radio, int* src, int* aprs, int* sms){
     if (src) *src = 0; if (aprs) *aprs = 0; if (sms) *sms = 0;
+    monitor_lock_init();
+    MONITOR_LOCK();
     MonMark* m = mark_get_slot(radio);
-    if (!m || !m->used || m->radio != radio) return;
+    if (!m || !m->used || m->radio != radio) {
+        MONITOR_UNLOCK();
+        return;
+    }
     if (src)  *src  = m->src;
     if (aprs) *aprs = m->aprs;
     if (sms)  *sms  = m->sms;
+    MONITOR_UNLOCK();
 }
 
 static void http_send_json(struct io* io, int code, const char* reason, const std::string& body) {
@@ -2393,7 +2422,7 @@ static std::string hex_encode(const BYTE* data, size_t len) {
     return out;
 }
 
-static void web_session_cleanup() {
+static void web_session_cleanup_locked() {
     unsigned now = now_sec();
     for (std::map<std::string, WebSession>::iterator it = g_web_sessions.begin(); it != g_web_sessions.end(); ) {
         if (it->second.expires <= now) g_web_sessions.erase(it++);
@@ -2401,8 +2430,17 @@ static void web_session_cleanup() {
     }
 }
 
+static void web_session_cleanup() {
+    monitor_lock_init();
+    MONITOR_LOCK();
+    web_session_cleanup_locked();
+    MONITOR_UNLOCK();
+}
+
 static std::string web_session_create(dword dmrid) {
     unsigned now = now_sec();
+    monitor_lock_init();
+    MONITOR_LOCK();
     char seed[256];
     snprintf(seed, sizeof(seed), "%u|%u|%u|%u|%u|%lu", (unsigned)dmrid, now, (unsigned)g_tick, (unsigned)g_sec, (unsigned)rand(), (unsigned long)g_web_sessions.size());
     BYTE hash[SHA256_BLOCK_SIZE];
@@ -2412,24 +2450,39 @@ static std::string web_session_create(dword dmrid) {
     ws.dmrid = dmrid;
     ws.expires = now + WEB_SESSION_TTL;
     g_web_sessions[token] = ws;
+    MONITOR_UNLOCK();
     return token;
 }
 
 static bool web_session_lookup(const std::string& token, dword* out_dmrid) {
     if (out_dmrid) *out_dmrid = 0;
     if (token.empty()) return false;
-    web_session_cleanup();
+    monitor_lock_init();
+    MONITOR_LOCK();
+    web_session_cleanup_locked();
     std::map<std::string, WebSession>::iterator it = g_web_sessions.find(token);
-    if (it == g_web_sessions.end()) return false;
+    if (it == g_web_sessions.end()) {
+        MONITOR_UNLOCK();
+        return false;
+    }
     unsigned now = now_sec();
-    if (it->second.expires <= now) { g_web_sessions.erase(it); return false; }
+    if (it->second.expires <= now) {
+        g_web_sessions.erase(it);
+        MONITOR_UNLOCK();
+        return false;
+    }
     it->second.expires = now + WEB_SESSION_TTL;
     if (out_dmrid) *out_dmrid = it->second.dmrid;
+    MONITOR_UNLOCK();
     return true;
 }
 
 static void web_session_remove(const std::string& token) {
-    if (!token.empty()) g_web_sessions.erase(token);
+    if (token.empty()) return;
+    monitor_lock_init();
+    MONITOR_LOCK();
+    g_web_sessions.erase(token);
+    MONITOR_UNLOCK();
 }
 
 static std::string request_auth_token(const std::string& req) {
@@ -2877,12 +2930,20 @@ static void* monitor_thread(void* lp){ (void)lp;
     g_listen = s; int one=1; setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (char*)&one, sizeof(one));
     struct sockaddr_in a; memset(&a,0,sizeof(a)); a.sin_family=AF_INET; a.sin_port=htons((uint16_t)G.port);
 #ifdef _WIN32
-    InetPtonA(AF_INET, G.bind_ip, &a.sin_addr);
+    if (InetPtonA(AF_INET, G.bind_ip, &a.sin_addr) != 1) {
+        InetPtonA(AF_INET, "0.0.0.0", &a.sin_addr);
+    }
+    DWORD tv = 1000;
+    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
 #else
-    inet_pton(AF_INET, G.bind_ip, &a.sin_addr);
+    if (inet_pton(AF_INET, G.bind_ip, &a.sin_addr) != 1) {
+        inet_pton(AF_INET, "0.0.0.0", &a.sin_addr);
+    }
+    struct timeval tv; tv.tv_sec = 1; tv.tv_usec = 0;
+    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 #endif
-    if (bind(s, (struct sockaddr*)&a, sizeof(a))<0){ perror("monitor bind"); return 0; }
-    listen(s, 64);
+    if (bind(s, (struct sockaddr*)&a, sizeof(a))<0){ perror("monitor bind"); g_listen = SOCK_INVALID; CLOSESOCK(s); return 0; }
+    if (listen(s, 64) < 0) { perror("monitor listen"); g_listen = SOCK_INVALID; CLOSESOCK(s); return 0; }
 #ifdef _WIN32
     InterlockedExchange(&g_run, 1);
 #else
@@ -2898,6 +2959,8 @@ static void* monitor_thread(void* lp){ (void)lp;
         struct sockaddr_in ca; socklen_t calen=sizeof(ca); sock_t c=accept(s,(struct sockaddr*)&ca,&calen);
         if (c==SOCK_INVALID) continue; struct io io={c}; handle_client(&io);
     }
+    if (g_listen == s) g_listen = SOCK_INVALID;
+    CLOSESOCK(s);
 #ifdef _WIN32
     return 0;
 #else
@@ -2906,7 +2969,18 @@ static void* monitor_thread(void* lp){ (void)lp;
 }
 
 void monitor_start(const MonitorConfig* cfg){
-    if (cfg){ if (cfg->bind_addr) strncpy(G.bind_ip, cfg->bind_addr, sizeof(G.bind_ip)-1); if (cfg->port>0) G.port=cfg->port; if (cfg->doc_root) strncpy(G.doc_root, cfg->doc_root, sizeof(G.doc_root)-1); }
+    monitor_lock_init();
+    if (cfg){
+        if (cfg->bind_addr && cfg->bind_addr[0]) {
+            strncpy(G.bind_ip, cfg->bind_addr, sizeof(G.bind_ip)-1);
+            G.bind_ip[sizeof(G.bind_ip)-1] = 0;
+        }
+        if (cfg->port>0) G.port=cfg->port;
+        if (cfg->doc_root && cfg->doc_root[0]) {
+            strncpy(G.doc_root, cfg->doc_root, sizeof(G.doc_root)-1);
+            G.doc_root[sizeof(G.doc_root)-1] = 0;
+        }
+    }
 #ifdef _WIN32
     if (InterlockedCompareExchange(&g_run, 0, 0)) return; g_thread = CreateThread(NULL,0,monitor_thread,NULL,0,NULL);
 #else
@@ -3333,7 +3407,7 @@ void process_config_file()
 
 #ifdef HAVE_SMS
 		g_sms.enabled = c.getint("SMS","Enable",0) != 0;
-		strncpy(g_sms.udphost, c.getstring("SMS","UDPHost","127.0.0.1").c_str(), sizeof(g_sms.udphost)-1);
+		strncpy(g_sms.udphost, c.getstring("SMS","UDPHost","0.0.0.0").c_str(), sizeof(g_sms.udphost)-1);
 		g_sms.udpport = c.getint("SMS","UDPPort",5555);
 		g_sms.allow_private = c.getint("SMS","AllowPrivate",1) != 0;
 		g_sms.permit_all = c.getint("SMS","PermitAll",0) != 0;
@@ -3528,7 +3602,8 @@ int main(int argc, char **argv)
 
 #ifdef HAVE_HTTPMODE
 	if (g_monitor_enabled) {
-		MonitorConfig mc = {g_host, g_monitor_port, g_monitor_root};
+		const char* monitor_bind = g_host[0] ? g_host : "0.0.0.0";
+		MonitorConfig mc = {monitor_bind, g_monitor_port, g_monitor_root};
 		monitor_start(&mc);
 	}
 #endif

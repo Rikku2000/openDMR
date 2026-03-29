@@ -31,9 +31,7 @@
         <section class="hero-card">
           <div>
             <h1>Modern network overview for active calls, talkgroups, and system health.</h1>
-            <p class="hero-copy">
-              
-            </p>
+            <p class="hero-copy"></p>
             <div class="hero-chips">
               <span class="chip" id="hero-status">Waiting for live data</span>
               <span class="chip chip-soft" id="hero-summary">No active transmissions yet</span>
@@ -58,17 +56,63 @@
           </div>
         </section>
 
-        <section class="monitor-grid">
-          <article class="panel-card monitor-stat-card">
-            <div class="panel-head">
-              <div>
-                <div class="panel-title">Server Monitor</div>
-                <div class="panel-subtitle">Direct output from <code>/api/stat</code></div>
-              </div>
-              <div class="panel-meta" id="stat-meta">No reply yet</div>
-            </div>
-            <pre id="stat" class="terminal">Waiting for /STAT reply…</pre>
+        <section class="metric-grid" aria-label="Monitor metrics">
+          <article class="metric-card accent">
+            <div class="metric-label">Node vectors</div>
+            <div class="metric-value" id="monitor-metric-vectors">0</div>
+            <div class="metric-sub" id="monitor-metric-vectors-sub">No radio vectors loaded</div>
           </article>
+
+          <article class="metric-card">
+            <div class="metric-label">Connected nodes</div>
+            <div class="metric-value" id="monitor-metric-nodes">0</div>
+            <div class="metric-sub" id="monitor-metric-nodes-sub">Waiting for /STAT</div>
+          </article>
+
+          <article class="metric-card">
+            <div class="metric-label">Active talkgroups</div>
+            <div class="metric-value" id="monitor-metric-tgs">0</div>
+            <div class="metric-sub" id="monitor-metric-tgs-sub">No slot subscriptions yet</div>
+          </article>
+
+          <article class="metric-card">
+            <div class="metric-label">Server tick</div>
+            <div class="metric-value metric-value-small" id="monitor-metric-tick">—</div>
+            <div class="metric-sub" id="monitor-metric-tick-sub">Waiting for counters</div>
+          </article>
+        </section>
+
+        <section class="panel-card wide-card">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Server Monitor</div>
+              <div class="panel-subtitle">Structured table view from <code>/api/stat</code></div>
+            </div>
+            <div class="panel-meta" id="stat-meta">No reply yet</div>
+          </div>
+
+          <div class="table-wrap">
+            <table class="table" id="tab-monitor" aria-label="Server monitor table">
+              <thead>
+                <tr>
+                  <th>Node vector</th>
+                  <th>Radio slot</th>
+                  <th>Node ID</th>
+                  <th>DMR ID</th>
+                  <th>Auth</th>
+                  <th>Seen sec</th>
+                  <th>Slot 1 TG</th>
+                  <th>Slot 2 TG</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+
+          <details class="monitor-raw">
+            <summary>Raw /STAT output</summary>
+            <pre id="stat" class="terminal terminal-short">Waiting for /STAT reply…</pre>
+          </details>
         </section>
       </main>
     </div>

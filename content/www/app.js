@@ -694,26 +694,168 @@ async function renderLog() {
   }
 }
 
+function parseStatText(text) {
+  const result = { sec: null, tick: null, vectors: [], rows: [] };
+  const lines = String(text || '').split(/\r?\n/).map((line) => line.trimEnd()).filter(Boolean);
+  let currentVector = null;
+  let currentNode = null;
+
+  lines.forEach((line) => {
+    const secMatch = line.match(/^Sec\s+(\d+)\s+tick\s+(\d+)$/i);
+    if (secMatch) {
+      result.sec = Number(secMatch[1]);
+      result.tick = Number(secMatch[2]);
+      return;
+    }
+
+    const vectorMatch = line.match(/^Node vector\s+(\d+),\s+radioslot\s+(\d+)$/i);
+    if (vectorMatch) {
+      currentVector = {
+        vectorId: vectorMatch[1],
+        radioSlot: vectorMatch[2],
+        nodes: []
+      };
+      result.vectors.push(currentVector);
+      currentNode = null;
+      return;
+    }
+
+    const nodeMatch = line.match(/^\s*([0-9.]+)\s+ID\s+(\d+)\s+dmrid\s+(\d+)\s+auth\s+(\d+)\s+sec\s+(\d+)$/i);
+    if (nodeMatch && currentVector) {
+      currentNode = {
+        vectorId: currentVector.vectorId,
+        radioSlot: currentVector.radioSlot,
+        ip: nodeMatch[1],
+        nodeId: nodeMatch[2],
+        dmrid: nodeMatch[3],
+        auth: nodeMatch[4] === '1',
+        hitSec: nodeMatch[5],
+        slot1: '—',
+        slot2: '—'
+      };
+      currentVector.nodes.push(currentNode);
+      result.rows.push(currentNode);
+      return;
+    }
+
+    const slotMatch = line.match(/^\s*S([12])\s+TG\s+(\d+)$/i);
+    if (slotMatch && currentNode) {
+      currentNode[`slot${slotMatch[1]}`] = slotMatch[2];
+    }
+  });
+
+  return result;
+}
+
+function setMonitorMetrics(parsed) {
+  const rows = parsed.rows || [];
+  const vectors = parsed.vectors || [];
+  const talkgroups = new Set();
+
+  rows.forEach((row) => {
+    if (row.slot1 && row.slot1 !== '—') talkgroups.add(row.slot1);
+    if (row.slot2 && row.slot2 !== '—') talkgroups.add(row.slot2);
+  });
+
+  setText('monitor-metric-vectors', String(vectors.length));
+  setText('monitor-metric-vectors-sub', vectors.length
+    ? vectors.map((vector) => `${vector.vectorId} · RS ${vector.radioSlot}`).join(', ')
+    : 'No radio vectors loaded');
+  setText('monitor-metric-nodes', String(rows.length));
+  setText('monitor-metric-nodes-sub', rows.length
+    ? rows.map((row) => row.nodeId).join(', ')
+    : 'No connected nodes reported');
+  setText('monitor-metric-tgs', String(talkgroups.size));
+  setText('monitor-metric-tgs-sub', talkgroups.size
+    ? Array.from(talkgroups).join(', ')
+    : 'No slot subscriptions yet');
+  setText('monitor-metric-tick', parsed.tick != null ? String(parsed.tick) : '—');
+  setText('monitor-metric-tick-sub', parsed.sec != null
+    ? `Server sec ${parsed.sec}`
+    : 'Waiting for counters');
+
+  setText('hero-status', rows.length ? 'Live nodes' : 'Idle');
+  setChipTone('hero-status', rows.length ? '' : 'soft');
+  setText('hero-summary', rows.length
+    ? `${rows.length} node${rows.length === 1 ? '' : 's'} across ${vectors.length} vector${vectors.length === 1 ? '' : 's'}`
+    : 'No active nodes reported');
+}
+
+function renderStatTable(parsed) {
+  const tbody = document.querySelector('#tab-monitor tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+
+  if (!parsed.rows.length) {
+    const tr = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = 9;
+    cell.textContent = 'No connected nodes found in /STAT output';
+    tr.append(cell);
+    tbody.append(tr);
+    return;
+  }
+
+  parsed.rows.forEach((row) => {
+    const tr = document.createElement('tr');
+    tr.append(td(row.vectorId, 'emphasis'));
+    tr.append(td(row.radioSlot));
+    tr.append(td(row.nodeId, 'numeric'));
+    tr.append(td(row.dmrid, 'numeric'));
+    tr.append(td(row.auth ? 'YES' : 'NO', row.auth ? 'ok' : 'bad'));
+    tr.append(td(row.hitSec, 'numeric'));
+    tr.append(td(row.slot1, row.slot1 !== '—' ? 'numeric emphasis' : ''));
+    tr.append(td(row.slot2, row.slot2 !== '—' ? 'numeric emphasis' : ''));
+    tbody.append(tr);
+  });
+}
+
 async function renderStat() {
   const statEl = document.getElementById('stat');
-  if (!statEl) return;
+  const tbody = document.querySelector('#tab-monitor tbody');
+  if (!statEl && !tbody) return;
 
   try {
     const text = await fetchText('/api/stat');
-    statEl.textContent = text || 'No /STAT reply';
+    if (statEl) statEl.textContent = text || 'No /STAT reply';
 
-    const lines = text.split('\n').filter(Boolean);
+    const parsed = parseStatText(text);
+    renderStatTable(parsed);
+    setMonitorMetrics(parsed);
+
     setText('monitor-status', text ? 'STAT connected' : 'STAT idle');
     const statusChip = document.getElementById('monitor-status');
     if (statusChip) statusChip.className = text ? 'chip' : 'chip chip-warn';
-    setText('stat-meta', lines.length ? `${lines.length} lines received` : 'Empty reply');
+    setText('stat-meta', parsed.rows.length
+      ? `${parsed.rows.length} node${parsed.rows.length === 1 ? '' : 's'} loaded`
+      : 'No connected nodes');
   } catch (error) {
     console.error('stat:', error);
-    statEl.textContent = 'No /STAT reply';
+    if (statEl) statEl.textContent = 'No /STAT reply';
+    if (tbody) {
+      tbody.innerHTML = '';
+      const tr = document.createElement('tr');
+      const cell = document.createElement('td');
+      cell.colSpan = 9;
+      cell.textContent = 'Unable to load /STAT output';
+      tr.append(cell);
+      tbody.append(tr);
+    }
     setText('monitor-status', 'STAT unavailable');
     const statusChip = document.getElementById('monitor-status');
     if (statusChip) statusChip.className = 'chip chip-bad';
     setText('stat-meta', 'Request failed');
+    setText('hero-status', 'Unavailable');
+    setChipTone('hero-status', 'bad');
+    setText('hero-summary', 'Check the local UDP /STAT responder and try again');
+    setText('monitor-metric-vectors', '0');
+    setText('monitor-metric-vectors-sub', 'No radio vectors loaded');
+    setText('monitor-metric-nodes', '0');
+    setText('monitor-metric-nodes-sub', 'Unable to read /STAT');
+    setText('monitor-metric-tgs', '0');
+    setText('monitor-metric-tgs-sub', 'Unable to read /STAT');
+    setText('monitor-metric-tick', '—');
+    setText('monitor-metric-tick-sub', 'Request failed');
   }
 }
 
