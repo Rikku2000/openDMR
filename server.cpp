@@ -937,6 +937,13 @@ void sendpacket (sockaddr_in addr, void const *p, int sz)
 	sendto (g_sock, (char*)p, sz, 0, (sockaddr*)&addr, sizeof(addr));
 }
 
+static void sendpacket_sock (int sock, sockaddr_in addr, void const *p, int sz)
+{
+	show_packet ("TX", my_inet_ntoa(addr.sin_addr).c_str(), (byte const*)p, sz, true);
+
+	sendto (sock, (char*)p, sz, 0, (sockaddr*)&addr, sizeof(addr));
+}
+
 node * findnode (dword nodeid, bool bCreateIfNecessary)
 {
 	node *n = NULL;
@@ -1515,12 +1522,11 @@ void handle_rx (sockaddr_in &addr, byte *pk, int pksize)
 						log (&addr, "Take group %u, nodeid %u slotid %s radioid %u", tg, nodeid, slotid_str(slotid).c_str(), radioid);
 						g->ownerslot = slotid;
 						g->tick = g_tick;
-					} else if (bEndStream && g->ownerslot == slotid) {
-						log (&addr, "Drop group %u, nodeid %u slotid %s radioid %u", tg, nodeid, slotid_str(slotid).c_str(), radioid);
-						g->ownerslot = 0;
 					}
+
+					bool forward_group_frame = (g->ownerslot == slotid);
 					
-					if (slotid == g->ownerslot) {
+					if (forward_group_frame) {
 						g->tick = g_tick;
 
 						slot const *dest = g->subscribers;
@@ -1564,13 +1570,13 @@ void handle_rx (sockaddr_in &addr, byte *pk, int pksize)
                         obp_forward_dmrd(pk, pksize, 0);
 					}
 
-					if (g_scanner->ownerslot && g_tick - g_scanner->tick >= 1500) {
-						log (&addr, "Timeout scanner, nodeid %u slotid %s radioid %u", nodeid, slotid_str(slotid).c_str(), radioid);
-						g_scanner->ownerslot = 0;
+					if (bEndStream && forward_group_frame) {
+						log (&addr, "Drop group %u, nodeid %u slotid %s radioid %u", tg, nodeid, slotid_str(slotid).c_str(), radioid);
+						g->ownerslot = 0;
 					}
 
-					if (s->slotid == g_scanner->ownerslot && bEndStream) {
-						log (&addr, "Drop scanner, nodeid %u slotid %s radioid %u", nodeid, slotid_str(slotid).c_str(), radioid);
+					if (g_scanner->ownerslot && g_tick - g_scanner->tick >= 1500) {
+						log (&addr, "Timeout scanner, nodeid %u slotid %s radioid %u", nodeid, slotid_str(slotid).c_str(), radioid);
 						g_scanner->ownerslot = 0;
 					}
 
@@ -1590,7 +1596,9 @@ void handle_rx (sockaddr_in &addr, byte *pk, int pksize)
 						g_scanner->tick = g_tick;
 					}
 
-					if (s->slotid == g_scanner->ownerslot) {
+					bool forward_scanner_frame = (s->slotid == g_scanner->ownerslot);
+
+					if (forward_scanner_frame) {
 						g_scanner->tick = g_tick;
 
 						slot const *dest = g_scanner->subscribers;
@@ -1605,6 +1613,11 @@ void handle_rx (sockaddr_in &addr, byte *pk, int pksize)
 	
 							dest = dest->next;
 						}
+					}
+
+					if (bEndStream && forward_scanner_frame) {
+						log (&addr, "Drop scanner, nodeid %u slotid %s radioid %u", nodeid, slotid_str(slotid).c_str(), radioid);
+						g_scanner->ownerslot = 0;
 					}
 				}
 			}
@@ -3476,7 +3489,7 @@ static bool tg_in_list(dword tg, PCSTR csv) {
 }
 
 static void obp_housekeeping_one(ob_peer& p) {
-    if (!p.enabled) return;
+    if (!p.enabled || p.sock == -1) return;
     if (p.resolve_interval > 0 && g_sec - p.last_resolve_sec >= (dword)p.resolve_interval) {
         obp_resolve_now_one(p);
     }
@@ -3487,10 +3500,10 @@ static void obp_housekeeping_one(ob_peer& p) {
                 log(NULL, "OpenBridge: unable to build BCKA HMAC - not sending");
                 return;
             }
-            sendpacket(p.addr, bcka, 24);
+            sendpacket_sock(p.sock, p.addr, bcka, 24);
         } else {
             static const byte bcka[4] = {'B','C','K','A'};
-            sendpacket(p.addr, bcka, 4);
+            sendpacket_sock(p.sock, p.addr, bcka, 4);
         }
         p.last_ping_sec = g_sec;
         p.last_tx_sec = g_sec;
@@ -3545,7 +3558,7 @@ void obp_forward_dmrd(const byte* pk, int sz, int origin_tag) {
                 return;
             }
         }
-        sendpacket(P.addr, frame.data(), (int)frame.size());
+        sendpacket_sock(P.sock, P.addr, frame.data(), (int)frame.size());
         P.last_tx_sec = g_sec;
     };
 
