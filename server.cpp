@@ -3425,17 +3425,23 @@ static bool ct_memeq(const void* a, const void* b, size_t n) {
     return diff == 0;
 }
 
+static const size_t OBP_DMRD_BLOCK_LEN = 51;
+static const size_t OBP_DMRD_TOTAL_NO_HMAC = 55;
+static const size_t OBP_DMRD_TOTAL_WITH_HMAC = OBP_DMRD_TOTAL_NO_HMAC + 20;
+static const size_t HS_DMRD_EXTRA_LEN = 2;
+static const size_t HS_DMRD_TOTAL_WITH_METRICS = OBP_DMRD_TOTAL_NO_HMAC + HS_DMRD_EXTRA_LEN;
+
 static bool obp_verify_dmrd_hmac(const byte* pkt, size_t n, const char* key) {
-    if (n != DMRD_TOTAL_WITH_HMAC) return false;
+    if (n != OBP_DMRD_TOTAL_WITH_HMAC) return false;
     byte mac[20];
-    if (obp_hmac_sha1(pkt, DMRD_TOTAL_NO_HMAC, key, mac) != 0) return false;
-    return ct_memeq(mac, pkt + DMRD_TOTAL_NO_HMAC, 20);
+    if (obp_hmac_sha1(pkt, OBP_DMRD_TOTAL_NO_HMAC, key, mac) != 0) return false;
+    return ct_memeq(mac, pkt + OBP_DMRD_TOTAL_NO_HMAC, 20);
 }
 
 static int obp_append_hmac_dmrd(std::vector<byte>& frame, const char* key) {
     byte mac[20];
-    if (frame.size() != DMRD_TOTAL_NO_HMAC) return -1;
-    if (obp_hmac_sha1(frame.data(), DMRD_TOTAL_NO_HMAC, key, mac) != 0) return -1;
+    if (frame.size() != OBP_DMRD_TOTAL_NO_HMAC) return -1;
+    if (obp_hmac_sha1(frame.data(), OBP_DMRD_TOTAL_NO_HMAC, key, mac) != 0) return -1;
     frame.insert(frame.end(), mac, mac + 20);
     return 0;
 }
@@ -3491,14 +3497,26 @@ void obp_housekeeping_all() {
 }
 
 void obp_forward_dmrd(const byte* pk, int sz, int origin_tag) {
-    if (sz != DMRD_TOTAL_NO_HMAC || memcmp(pk, "DMRD", 4) != 0) return;
+    byte clean[OBP_DMRD_TOTAL_NO_HMAC];
+
+    if (!pk || sz <= 0 || memcmp(pk, "DMRD", 4) != 0)
+        return;
+
+    if ((size_t)sz == HS_DMRD_TOTAL_WITH_METRICS) {
+        memcpy(clean, pk, OBP_DMRD_TOTAL_NO_HMAC);
+        pk = clean;
+        sz = (int)OBP_DMRD_TOTAL_NO_HMAC;
+    }
+
+    if ((size_t)sz != OBP_DMRD_TOTAL_NO_HMAC)
+        return;
  
     auto send_one = [&](ob_peer& P){
         if (!P.enabled || P.sock == -1) return;
         dword tg = get3(pk + 8);
         if (!(P.permit_all || tg_in_list(tg, P.permit_tgs))) return;
 
-        std::vector<byte> block51(pk + 4, pk + 4 + DMRD_BLOCK_LEN);
+        std::vector<byte> block51(pk + 4, pk + 4 + OBP_DMRD_BLOCK_LEN);
         block51[11] &= 0x7F;
         block51[7]  = (P.network_id >> 24) & 0xFF;
         block51[8]  = (P.network_id >> 16) & 0xFF;
@@ -3597,7 +3615,7 @@ static void obp_handle_rx_one(ob_peer& P) {
             continue;
         }
 
-        if (sz == DMRD_TOTAL_NO_HMAC || sz == DMRD_TOTAL_WITH_HMAC) {
+        if ((size_t)sz == OBP_DMRD_TOTAL_NO_HMAC || (size_t)sz == OBP_DMRD_TOTAL_WITH_HMAC) {
             if (memcmp(buf, "DMRD", 4) != 0) continue;
 
 #ifdef USE_SQLITE3
@@ -3664,7 +3682,7 @@ static void obp_handle_rx_one(ob_peer& P) {
             const byte* frame = buf;
 
             if (P.enhanced) {
-                if (sz == DMRD_TOTAL_WITH_HMAC) {
+                if ((size_t)sz == OBP_DMRD_TOTAL_WITH_HMAC) {
                     if (!obp_verify_dmrd_hmac(frame, (size_t)sz, P.pass)) {
                         if (!P.relax_checks) { log(&r, "OpenBridge: DMRD HMAC fail"); continue; }
                     }
@@ -3677,11 +3695,11 @@ static void obp_handle_rx_one(ob_peer& P) {
             dword dtg = ((dword)block[4] << 16) | ((dword)block[5] << 8) | block[6];
             if (!(P.permit_all || tg_in_list(dtg, P.permit_tgs))) continue;
 
-            byte out[DMRD_TOTAL_NO_HMAC];
-            memcpy(out, frame, DMRD_TOTAL_NO_HMAC);
+            byte out[OBP_DMRD_TOTAL_NO_HMAC];
+            memcpy(out, frame, OBP_DMRD_TOTAL_NO_HMAC);
             out[15] &= 0x7F;
 
-            obp_fanout_to_locals(out, DMRD_TOTAL_NO_HMAC);
+            obp_fanout_to_locals(out, (int)OBP_DMRD_TOTAL_NO_HMAC);
             P.last_rx_sec = g_sec;
         }
     }
