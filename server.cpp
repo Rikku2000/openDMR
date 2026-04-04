@@ -3395,17 +3395,17 @@ static int obp_hmac_sha1(const void* msg, size_t len, const char* key, byte out2
 }
 
 static bool obp_verify_dmrd_hmac(const byte* pkt, size_t n, const char* key) {
-    if (n != DMRD_BLOCK_LEN + 20) return false;
+    if (n != DMRD_TOTAL_WITH_HMAC) return false;
     byte mac[20];
-    if (obp_hmac_sha1(pkt, DMRD_BLOCK_LEN, key, mac) != 0) return false;
-    return memcmp(mac, pkt + DMRD_BLOCK_LEN, 20) == 0;
+    if (obp_hmac_sha1(pkt, DMRD_TOTAL_NO_HMAC, key, mac) != 0) return false;
+    return memcmp(mac, pkt + DMRD_TOTAL_NO_HMAC, 20) == 0;
 }
 
-static int obp_append_hmac_dmrd(std::vector<byte>& block51, const char* key) {
+static int obp_append_hmac_dmrd(std::vector<byte>& frame55, const char* key) {
     byte mac[20];
-    if (block51.size() != DMRD_BLOCK_LEN) return -1;
-    if (obp_hmac_sha1(block51.data(), DMRD_BLOCK_LEN, key, mac) != 0) return -1;
-    block51.insert(block51.end(), mac, mac + 20);
+    if (frame55.size() != DMRD_TOTAL_NO_HMAC) return -1;
+    if (obp_hmac_sha1(frame55.data(), DMRD_TOTAL_NO_HMAC, key, mac) != 0) return -1;
+    frame55.insert(frame55.end(), mac, mac + 20);
     return 0;
 }
 
@@ -3471,16 +3471,18 @@ void obp_forward_dmrd(const byte* pk, int sz, int origin_tag) {
         }
         P.stream_ring[P.ring_ix++] = sid;
 
-        if (P.enhanced) {
-            if (obp_append_hmac_dmrd(block51, P.pass) != 0) {
-                log(NULL, "OpenBridge: HMAC unavailable (build w/ USE_OPENSSL) — not sending");
-                return;
-            }
-        }
         std::vector<byte> frame;
         const char hdr[4] = {'D','M','R','D'};
         frame.insert(frame.end(), hdr, hdr + 4);
         frame.insert(frame.end(), block51.begin(), block51.end());
+
+        if (P.enhanced) {
+            if (obp_append_hmac_dmrd(frame, P.pass) != 0) {
+                log(NULL, "OpenBridge: HMAC unavailable (build w/ USE_OPENSSL) — not sending");
+                return;
+            }
+        }
+
         sendpacket(P.addr, frame.data(), (int)frame.size());
         P.last_tx_sec = g_sec;
     };
@@ -3587,11 +3589,10 @@ static void obp_handle_rx_one(ob_peer& P) {
 #endif
 
             const byte* block = buf + 4;
-            size_t blen = (size_t)sz - 4;
 
             if (P.enhanced) {
-                if (blen == DMRD_BLOCK_LEN + 20) {
-                    if (!obp_verify_dmrd_hmac(block, blen, P.pass)) {
+                if (sz == DMRD_TOTAL_WITH_HMAC) {
+                    if (!obp_verify_dmrd_hmac(buf, (size_t)sz, P.pass)) {
                         if (!P.relax_checks) { log(&r, "OpenBridge: DMRD HMAC fail"); continue; }
                     }
                 } else {
