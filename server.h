@@ -218,6 +218,7 @@ struct ob_peer {
     byte        ring_ix;
     bool        enhanced;
     bool        relax_checks;
+    bool        hblink_compat;
 	char  		target_host[256];
 	char        alias_name[128];
 	int   		target_port;

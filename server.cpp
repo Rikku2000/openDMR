@@ -45,9 +45,9 @@ typedef struct {
 static MonMark g_marks[MONMARK_N];
 #endif
 
-int obp_local_port = 62044;
+int obp_local_port = 62000;
 char ob_host[MAX_PASSWORD_SIZE];
-int obp_remote_port = 62044;
+int obp_remote_port = 62000;
 
 std::vector<ob_peer> g_obp_peers;
 
@@ -3292,7 +3292,7 @@ static void obp_fill_from_section(ob_peer& p, config_file& c, const char* sec, i
     p.local_port = c.getint(sec, "Port", fallback_local_port);
     strcpy(p.target_host, c.getstring(sec, "TargetHost", "").c_str());
     strcpy(p.alias_name, c.getstring(sec, "AliasName", "").c_str());
-    p.target_port   = c.getint(sec, "TargetPort", 62044);
+    p.target_port   = c.getint(sec, "TargetPort", obp_remote_port);
     p.network_id    = c.getint(sec, "NetworkId", 0);
     strcpy(p.pass,   c.getstring(sec, "Passphrase", "").c_str());
     p.force_slot1   = c.getint(sec, "ForceSlot1", 0);
@@ -3300,6 +3300,7 @@ static void obp_fill_from_section(ob_peer& p, config_file& c, const char* sec, i
     strcpy(p.permit_tgs, c.getstring(sec, "PermitTGs", "").c_str());
     p.enhanced      = c.getint(sec, "EnhancedOBP", 0);
     p.relax_checks  = c.getint(sec, "RelaxChecks", 0);
+    p.hblink_compat = c.getint(sec, "HBLinkCompat", 1) != 0;
     p.resolve_interval = c.getint(sec, "ResolveInterval", 600);
     p.last_resolve_sec = p.last_rx_sec = p.last_tx_sec = p.last_ping_sec = g_sec;
 }
@@ -3311,7 +3312,7 @@ void obp_load_extra_from_config(config_file& c) {
 
     for (int i=0;i<3;i++) {
         ob_peer p;
-        obp_fill_from_section(p, c, secs[i], fallback + (i+1));
+        obp_fill_from_section(p, c, secs[i], fallback + i);
         if (p.enabled && p.target_host[0])
             g_obp_peers.push_back(p);
     }
@@ -3355,6 +3356,7 @@ void obp_show_all() {
 		if (!p.permit_all)
 			logmsg (LOG_YELLOW, 0, "OB Permit TGs : %s\n", p.permit_tgs);
 		logmsg (LOG_YELLOW, 0, "OB Enhanced   : %s\n", p.enhanced ? "Yes" : "No");
+		logmsg (LOG_YELLOW, 0, "OB Framing    : %s\n", p.hblink_compat ? "HBLink 53/73" : "Legacy 55/75");
 		logmsg (LOG_YELLOW, 0, "OB Relax      : %s\n", p.relax_checks ? "Yes" : "No");
 		logmsg (LOG_YELLOW, 0, "OB Resolve    : %d seconds\n", p.resolve_interval);
     }
@@ -3425,23 +3427,27 @@ static bool ct_memeq(const void* a, const void* b, size_t n) {
     return diff == 0;
 }
 
-static const size_t OBP_DMRD_BLOCK_LEN = 51;
-static const size_t OBP_DMRD_TOTAL_NO_HMAC = 55;
-static const size_t OBP_DMRD_TOTAL_WITH_HMAC = OBP_DMRD_TOTAL_NO_HMAC + 20;
+static const size_t HB_OBP_DMRD_BLOCK_LEN = 49;
+static const size_t HB_OBP_DMRD_TOTAL_NO_HMAC = 53;
+static const size_t HB_OBP_DMRD_TOTAL_WITH_HMAC = HB_OBP_DMRD_TOTAL_NO_HMAC + 20;
+static const size_t LEGACY_OBP_DMRD_BLOCK_LEN = 51;
+static const size_t LEGACY_OBP_DMRD_TOTAL_NO_HMAC = 55;
+static const size_t LEGACY_OBP_DMRD_TOTAL_WITH_HMAC = LEGACY_OBP_DMRD_TOTAL_NO_HMAC + 20;
 static const size_t HS_DMRD_EXTRA_LEN = 2;
-static const size_t HS_DMRD_TOTAL_WITH_METRICS = OBP_DMRD_TOTAL_NO_HMAC + HS_DMRD_EXTRA_LEN;
+static const size_t HS_DMRD_TOTAL_NO_METRICS = 55;
+static const size_t HS_DMRD_TOTAL_WITH_METRICS = HS_DMRD_TOTAL_NO_METRICS + HS_DMRD_EXTRA_LEN;
 
-static bool obp_verify_dmrd_hmac(const byte* pkt, size_t n, const char* key) {
-    if (n != OBP_DMRD_TOTAL_WITH_HMAC) return false;
+static bool obp_verify_dmrd_hmac(const byte* pkt, size_t n, size_t no_hmac_len, const char* key) {
+    if (n != no_hmac_len + 20) return false;
     byte mac[20];
-    if (obp_hmac_sha1(pkt, OBP_DMRD_TOTAL_NO_HMAC, key, mac) != 0) return false;
-    return ct_memeq(mac, pkt + OBP_DMRD_TOTAL_NO_HMAC, 20);
+    if (obp_hmac_sha1(pkt, no_hmac_len, key, mac) != 0) return false;
+    return ct_memeq(mac, pkt + no_hmac_len, 20);
 }
 
-static int obp_append_hmac_dmrd(std::vector<byte>& frame, const char* key) {
+static int obp_append_hmac_dmrd(std::vector<byte>& frame, size_t no_hmac_len, const char* key) {
     byte mac[20];
-    if (frame.size() != OBP_DMRD_TOTAL_NO_HMAC) return -1;
-    if (obp_hmac_sha1(frame.data(), OBP_DMRD_TOTAL_NO_HMAC, key, mac) != 0) return -1;
+    if (frame.size() != no_hmac_len) return -1;
+    if (obp_hmac_sha1(frame.data(), no_hmac_len, key, mac) != 0) return -1;
     frame.insert(frame.end(), mac, mac + 20);
     return 0;
 }
@@ -3497,18 +3503,18 @@ void obp_housekeeping_all() {
 }
 
 void obp_forward_dmrd(const byte* pk, int sz, int origin_tag) {
-    byte clean[OBP_DMRD_TOTAL_NO_HMAC];
+    byte clean[HS_DMRD_TOTAL_NO_METRICS];
 
     if (!pk || sz <= 0 || memcmp(pk, "DMRD", 4) != 0)
         return;
 
     if ((size_t)sz == HS_DMRD_TOTAL_WITH_METRICS) {
-        memcpy(clean, pk, OBP_DMRD_TOTAL_NO_HMAC);
+        memcpy(clean, pk, HS_DMRD_TOTAL_NO_METRICS);
         pk = clean;
-        sz = (int)OBP_DMRD_TOTAL_NO_HMAC;
+        sz = (int)HS_DMRD_TOTAL_NO_METRICS;
     }
 
-    if ((size_t)sz != OBP_DMRD_TOTAL_NO_HMAC)
+    if ((size_t)sz != HS_DMRD_TOTAL_NO_METRICS)
         return;
  
     auto send_one = [&](ob_peer& P){
@@ -3516,26 +3522,25 @@ void obp_forward_dmrd(const byte* pk, int sz, int origin_tag) {
         dword tg = get3(pk + 8);
         if (!(P.permit_all || tg_in_list(tg, P.permit_tgs))) return;
 
-        std::vector<byte> block51(pk + 4, pk + 4 + OBP_DMRD_BLOCK_LEN);
-        block51[11] &= 0x7F;
-        block51[7]  = (P.network_id >> 24) & 0xFF;
-        block51[8]  = (P.network_id >> 16) & 0xFF;
-        block51[9]  = (P.network_id >>  8) & 0xFF;
-        block51[10] = (P.network_id      ) & 0xFF;
+        const size_t tx_no_hmac_len = P.hblink_compat ? HB_OBP_DMRD_TOTAL_NO_HMAC : LEGACY_OBP_DMRD_TOTAL_NO_HMAC;
+        const size_t tx_block_len = P.hblink_compat ? HB_OBP_DMRD_BLOCK_LEN : LEGACY_OBP_DMRD_BLOCK_LEN;
+        (void)tx_block_len;
 
-        dword sid = (block51[12] << 24) | (block51[13] << 16) | (block51[14] << 8) | block51[15];
+        std::vector<byte> frame(pk, pk + tx_no_hmac_len);
+        frame[15] &= 0x7F;
+        frame[11] = (P.network_id >> 24) & 0xFF;
+        frame[12] = (P.network_id >> 16) & 0xFF;
+        frame[13] = (P.network_id >>  8) & 0xFF;
+        frame[14] = (P.network_id      ) & 0xFF;
+
+        dword sid = ((dword)frame[16] << 24) | ((dword)frame[17] << 16) | ((dword)frame[18] << 8) | frame[19];
         if (origin_tag == 1) {
             for (int i=0;i<256;i++) if (P.stream_ring[i]==sid) return;
         }
         P.stream_ring[P.ring_ix++] = sid;
 
-        std::vector<byte> frame;
-        const char hdr[4] = {'D','M','R','D'};
-        frame.insert(frame.end(), hdr, hdr + 4);
-        frame.insert(frame.end(), block51.begin(), block51.end());
-
         if (P.enhanced) {
-            if (obp_append_hmac_dmrd(frame, P.pass) != 0) {
+            if (obp_append_hmac_dmrd(frame, tx_no_hmac_len, P.pass) != 0) {
                 log(NULL, "OpenBridge: HMAC unavailable (build w/ USE_OPENSSL) - not sending");
                 return;
             }
@@ -3615,7 +3620,22 @@ static void obp_handle_rx_one(ob_peer& P) {
             continue;
         }
 
-        if ((size_t)sz == OBP_DMRD_TOTAL_NO_HMAC || (size_t)sz == OBP_DMRD_TOTAL_WITH_HMAC) {
+        size_t rx_no_hmac_len = 0;
+        bool rx_has_hmac = false;
+
+        if ((size_t)sz == HB_OBP_DMRD_TOTAL_NO_HMAC) {
+            rx_no_hmac_len = HB_OBP_DMRD_TOTAL_NO_HMAC;
+        } else if ((size_t)sz == HB_OBP_DMRD_TOTAL_WITH_HMAC) {
+            rx_no_hmac_len = HB_OBP_DMRD_TOTAL_NO_HMAC;
+            rx_has_hmac = true;
+        } else if ((size_t)sz == LEGACY_OBP_DMRD_TOTAL_NO_HMAC) {
+            rx_no_hmac_len = LEGACY_OBP_DMRD_TOTAL_NO_HMAC;
+        } else if ((size_t)sz == LEGACY_OBP_DMRD_TOTAL_WITH_HMAC) {
+            rx_no_hmac_len = LEGACY_OBP_DMRD_TOTAL_NO_HMAC;
+            rx_has_hmac = true;
+        }
+
+        if (rx_no_hmac_len) {
             if (memcmp(buf, "DMRD", 4) != 0) continue;
 
 #ifdef USE_SQLITE3
@@ -3682,8 +3702,8 @@ static void obp_handle_rx_one(ob_peer& P) {
             const byte* frame = buf;
 
             if (P.enhanced) {
-                if ((size_t)sz == OBP_DMRD_TOTAL_WITH_HMAC) {
-                    if (!obp_verify_dmrd_hmac(frame, (size_t)sz, P.pass)) {
+                if (rx_has_hmac) {
+                    if (!obp_verify_dmrd_hmac(frame, (size_t)sz, rx_no_hmac_len, P.pass)) {
                         if (!P.relax_checks) { log(&r, "OpenBridge: DMRD HMAC fail"); continue; }
                     }
                 } else {
@@ -3695,11 +3715,12 @@ static void obp_handle_rx_one(ob_peer& P) {
             dword dtg = ((dword)block[4] << 16) | ((dword)block[5] << 8) | block[6];
             if (!(P.permit_all || tg_in_list(dtg, P.permit_tgs))) continue;
 
-            byte out[OBP_DMRD_TOTAL_NO_HMAC];
-            memcpy(out, frame, OBP_DMRD_TOTAL_NO_HMAC);
+            byte out[HS_DMRD_TOTAL_NO_METRICS];
+            memset(out, 0, sizeof(out));
+            memcpy(out, frame, rx_no_hmac_len);
             out[15] &= 0x7F;
 
-            obp_fanout_to_locals(out, (int)OBP_DMRD_TOTAL_NO_HMAC);
+            obp_fanout_to_locals(out, (int)HS_DMRD_TOTAL_NO_METRICS);
             P.last_rx_sec = g_sec;
         }
     }
