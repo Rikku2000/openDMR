@@ -960,14 +960,21 @@ node * findnode (dword nodeid, bool bCreateIfNecessary)
 	if (!inrange(dmrid,LOW_DMRID,HIGH_DMRID)) 
 		return NULL;
 
+	if (essid >= 100)
+		return NULL;
+
 	int ix = dmrid-LOW_DMRID;
 
 	if (!g_node_index[ix]) {
+		if (!bCreateIfNecessary)
+			return NULL;
 
 		g_node_index[ix] = new nodevector;
 	}
 
- 	if (!g_node_index[ix]->sub[essid]) {
+	if (!g_node_index[ix]->sub[essid]) {
+		if (!bCreateIfNecessary)
+			return NULL;
 
 		n = g_node_index[ix]->sub[essid] = new node;
 
@@ -3462,10 +3469,19 @@ static void obp_housekeeping_one(ob_peer& p) {
         obp_resolve_now_one(p);
     }
     if (g_sec - p.last_ping_sec >= 20) {
-        char ping[11] = "RPTPING";
-        set4((byte*)ping+7, p.network_id ? p.network_id : 0x4F42504E);
-        sendpacket(p.addr, ping, 11);
+        if (p.enhanced) {
+            byte bcka[24];
+            if (obp_make_bcka(bcka, p.pass) != 0) {
+                log(NULL, "OpenBridge: unable to build BCKA HMAC - not sending");
+                return;
+            }
+            sendpacket(p.addr, bcka, 24);
+        } else {
+            static const byte bcka[4] = {'B','C','K','A'};
+            sendpacket(p.addr, bcka, 4);
+        }
         p.last_ping_sec = g_sec;
+        p.last_tx_sec = g_sec;
     }
 }
 
