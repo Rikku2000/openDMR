@@ -246,6 +246,9 @@ struct slot
 #ifdef HAVE_SMS
 	sms_buf			sms;
 #endif
+
+	slot() : node(NULL), slotid(0), tg(0), prev(NULL), next(NULL), parrotstart(0), parrotendcount(0), parrot(NULL), parrotseq(0) {
+	}
 };
 
 struct node
@@ -259,8 +262,8 @@ struct node
 	bool			bAuth;
 	dword			timer;
 
-	node() {
-		memset(this, 0, sizeof(*this));
+	node() : nodeid(0), dmrid(0), salt(0), hitsec(0), bAuth(false), timer(0) {
+		memset(&addr, 0, sizeof(addr));
 		slots[0].node = this;
 		slots[1].node = this;
 	}
@@ -768,6 +771,9 @@ void inline set4 (byte *p, dword n)
 	*p++ = n;
 }
 
+struct talkgroup;
+talkgroup * findgroup (dword tg, bool bCreateIfNecessary);
+
 static int csv_first_int(const std::string& csv) {
     char buf[512]; if (csv.empty()) return 0;
     strncpy(buf, csv.c_str(), sizeof(buf)-1); buf[sizeof(buf)-1]=0;
@@ -784,12 +790,116 @@ static int csv_first_int(const std::string& csv) {
     return 0;
 }
 
+static std::vector<dword> csv_all_ints(const std::string& csv) {
+    std::vector<dword> ret;
+    char buf[1024];
+
+    if (csv.empty())
+        return ret;
+
+    strncpy(buf, csv.c_str(), sizeof(buf)-1);
+    buf[sizeof(buf)-1] = 0;
+
+    char* p = buf;
+    while (*p) {
+        while (*p==' ' || *p=='	' || *p==',') ++p;
+        if (!*p) break;
+
+        char* q = p;
+        while (*q && *q != ',') ++q;
+        if (*q) *q++ = 0;
+
+        int v = atoi(p);
+        if (v > 0) {
+            bool seen = false;
+            for (size_t i = 0; i < ret.size(); ++i) {
+                if (ret[i] == (dword)v) {
+                    seen = true;
+                    break;
+                }
+            }
+            if (!seen)
+                ret.push_back((dword)v);
+        }
+
+        p = q;
+    }
+
+    return ret;
+}
+
 static std::string kv_value(const std::string& s, const char* key) {
     size_t k = s.find(key);
     if (k == std::string::npos) return "";
     k += strlen(key);
     size_t end = s.find(';', k);
     return s.substr(k, end==std::string::npos ? end : end - k);
+}
+
+static std::string csv_join_dwords(const std::vector<dword>& vals) {
+    std::string out;
+    char buf[32];
+
+    for (size_t i = 0; i < vals.size(); ++i) {
+        if (!out.empty())
+            out += ",";
+        sprintf(buf, "%u", (unsigned)vals[i]);
+        out += buf;
+    }
+
+    return out;
+}
+
+static std::map<dword, std::vector<slot*> > g_static_subscribers;
+
+static std::vector<dword>& slot_static_tgs(slot* s) {
+    return SLOT(s->slotid) ? s->node->static_tgs_ts2 : s->node->static_tgs_ts1;
+}
+
+static void static_remove_slot_from_tg(slot* s, dword tg) {
+    std::map<dword, std::vector<slot*> >::iterator it = g_static_subscribers.find(tg);
+    if (it == g_static_subscribers.end())
+        return;
+
+    std::vector<slot*>& subs = (*it).second;
+    for (std::vector<slot*>::iterator sit = subs.begin(); sit != subs.end(); ) {
+        if (*sit == s)
+            sit = subs.erase(sit);
+        else
+            ++sit;
+    }
+
+    if (subs.empty())
+        g_static_subscribers.erase(it);
+}
+
+static void static_unregister_slot(slot* s) {
+    std::vector<dword>& tgs = slot_static_tgs(s);
+    for (size_t i = 0; i < tgs.size(); ++i)
+        static_remove_slot_from_tg(s, tgs[i]);
+    tgs.clear();
+}
+
+static void static_register_slot(slot* s, const std::vector<dword>& tgs) {
+    static_unregister_slot(s);
+
+    std::vector<dword>& store = slot_static_tgs(s);
+    for (size_t i = 0; i < tgs.size(); ++i) {
+        dword tg = tgs[i];
+        store.push_back(tg);
+        findgroup(tg, true);
+
+        std::vector<slot*>& subs = g_static_subscribers[tg];
+        bool seen = false;
+        for (size_t j = 0; j < subs.size(); ++j) {
+            if (subs[j] == s) {
+                seen = true;
+                break;
+            }
+        }
+        if (!seen)
+            subs.push_back(s);
+    }
 }
 
 void show_packet (PCSTR title, char const *ip, byte const *pk, int sz, bool bShowDMRD=false) 
@@ -907,6 +1017,9 @@ void delete_node (dword nodeid)
 
 			if (n) {
 				log (&n->addr, "Delete node %d\n", nodeid);
+
+				static_unregister_slot (&n->slots[0]);
+				static_unregister_slot (&n->slots[1]);
 
 				unsubscribe_from_group (&n->slots[0]);
 
@@ -1403,6 +1516,29 @@ void handle_rx (sockaddr_in &addr, byte *pk, int pksize)
 							dest = dest->next;
 						}
 
+						std::map<dword, std::vector<slot*> >::iterator sit = g_static_subscribers.find(tg);
+						if (sit != g_static_subscribers.end()) {
+							std::vector<slot*>& static_slots = (*sit).second;
+							for (size_t i = 0; i < static_slots.size(); ++i) {
+								slot* sdest = static_slots[i];
+								if (!sdest)
+									continue;
+								if (sdest->slotid == slotid)
+									continue;
+								if (sdest->tg == tg)
+									continue;
+								if (!sdest->node || !sdest->node->bAuth || !getinaddr(sdest->node->addr))
+									continue;
+
+								if (SLOT(sdest->slotid))
+									pk[15] |= 0x80;
+								else
+									pk[15] &= 0x7F;
+
+								sendpacket (sdest->node->addr, pk, pksize);
+							}
+						}
+
                         obp_forward_dmrd(pk, pksize, 0);
 					}
 
@@ -1543,16 +1679,27 @@ void handle_rx (sockaddr_in &addr, byte *pk, int pksize)
 		n->hitsec = g_sec;
 
 		std::string cfg((char*)pk + 8, pksize - 8);
-		int ts1 = csv_first_int(kv_value(cfg, "TS1="));
-		if (ts1 > 0) {
-			talkgroup* g1 = findgroup((dword)ts1, true);
+		std::vector<dword> ts1 = csv_all_ints(kv_value(cfg, "TS1="));
+		std::vector<dword> ts2 = csv_all_ints(kv_value(cfg, "TS2="));
+
+		static_register_slot(&n->slots[0], ts1);
+		static_register_slot(&n->slots[1], ts2);
+
+		if (!ts1.empty()) {
+			talkgroup* g1 = findgroup(ts1[0], true);
 			if (g1) subscribe_to_group(&n->slots[0], g1);
+		} else {
+			unsubscribe_from_group(&n->slots[0]);
 		}
-		int ts2 = csv_first_int(kv_value(cfg, "TS2="));
-		if (ts2 > 0) {
-			talkgroup* g2 = findgroup((dword)ts2, true);
+
+		if (!ts2.empty()) {
+			talkgroup* g2 = findgroup(ts2[0], true);
 			if (g2) subscribe_to_group(&n->slots[1], g2);
+		} else {
+			unsubscribe_from_group(&n->slots[1]);
 		}
+
+		log (&addr, "RPTC static TGs node %d TS1=%s TS2=%s\n", nodeid, csv_join_dwords(ts1).c_str(), csv_join_dwords(ts2).c_str());
 
 		memcpy (pk, "RPTACK", 6);
 		set4(pk + 6, nodeid);
