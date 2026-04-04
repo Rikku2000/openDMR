@@ -3446,8 +3446,9 @@ static bool obp_verify_dmrd_hmac(const byte* pkt, size_t n, size_t no_hmac_len, 
 
 static int obp_append_hmac_dmrd(std::vector<byte>& frame, size_t no_hmac_len, const char* key) {
     byte mac[20];
-    if (frame.size() != no_hmac_len) return -1;
-    if (obp_hmac_sha1(frame.data(), no_hmac_len, key, mac) != 0) return -1;
+    if (frame.size() != LEGACY_OBP_DMRD_TOTAL_NO_HMAC) return -1;
+    if (obp_hmac_sha1(frame.data(), LEGACY_OBP_DMRD_TOTAL_NO_HMAC-2, key, mac) != 0) return -1;
+    frame.erase(frame.end() - 2, frame.end());
     frame.insert(frame.end(), mac, mac + 20);
     return 0;
 }
