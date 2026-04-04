@@ -311,7 +311,7 @@ struct talkgroup
 	}
 };
 
-talkgroup *g_talkgroups[MAX_TALK_GROUPS];
+static std::map<dword, talkgroup*> g_talkgroups;
 talkgroup *g_scanner;
 
 std::string my_inet_ntoa (in_addr in)
@@ -1031,7 +1031,7 @@ void delete_node (dword nodeid)
 
 				for (int i=0; i < 100; i++) {
 
-					if (g_node_index[ix]->sub[essid]) {
+					if (g_node_index[ix]->sub[i]) {
 
 						bNodes = true;
 						break;
@@ -1066,30 +1066,46 @@ talkgroup * findgroup (dword tg, bool bCreateIfNecessary)
 	if (!inrange(tg,1,MAX_TALK_GROUPS-1))
 		return NULL;
 
-	if (!g_talkgroups[tg] && bCreateIfNecessary) {
+	std::map<dword, talkgroup*>::iterator it = g_talkgroups.find(tg);
+	if (it == g_talkgroups.end()) {
+		if (!bCreateIfNecessary)
+			return NULL;
 
-		g_talkgroups[tg] = new talkgroup;
-
-		g_talkgroups[tg]->tg = tg;
+		talkgroup *g = new talkgroup;
+		g->tg = tg;
+		g_talkgroups[tg] = g;
+		return g;
 	}
 
-	return g_talkgroups[tg];
+	return (*it).second;
 }
 
 void _dump_groups(std::string &ret)
 {
 	char temp[200];
 
-	for (int i=0; i < MAX_TALK_GROUPS; i++) {
-		talkgroup const *g = g_talkgroups[i];
+	for (std::map<dword, talkgroup*>::const_iterator it = g_talkgroups.begin(); it != g_talkgroups.end(); ++it) {
+		talkgroup const *g = (*it).second;
+		if (!g)
+			continue;
 
-		sprintf (temp, "TALKGROUP %d owner %d slot %d head %p %d\n", g->tg, NODEID(g->ownerslot), SLOT(g->ownerslot)+1, g->subscribers, g->subscribers ? g->subscribers->node->nodeid : 0);
+		sprintf (temp, "TALKGROUP %u owner %u slot %u head %p %u\n",
+			(unsigned)g->tg,
+			(unsigned)NODEID(g->ownerslot),
+			(unsigned)(SLOT(g->ownerslot)+1),
+			g->subscribers,
+			g->subscribers ? (unsigned)g->subscribers->node->nodeid : 0u);
 
 		ret += temp;
 		slot *s = g->subscribers;
 
 		while (s) {
-			sprintf (temp, "\t%p node %d slot %d prev %p next %p\n", s, s->node->nodeid, SLOT(s->slotid)+1, s->prev, s->next);
+			sprintf (temp, "\t%p node %u slot %u prev %p next %p\n",
+				s,
+				(unsigned)s->node->nodeid,
+				(unsigned)(SLOT(s->slotid)+1),
+				s->prev,
+				s->next);
 
 			ret += temp;
 			s = s->next;
@@ -1264,10 +1280,9 @@ void handle_rx (sockaddr_in &addr, byte *pk, int pksize)
     char date_now[100];
     time_t now = time (0);
 
-	if (check_banned (pk) == 1)
-		return;
-
 	if (pksize == 55 && memcmp(pk, "DMRD", 4)==0) {
+		if (check_banned (pk) == 1)
+			return;
 		dword const radioid = get3(pk + 5);
 		dword const tg = get3 (pk + 8);
 		dword const nodeid = get4(pk + 11);
@@ -3394,18 +3409,27 @@ static int obp_hmac_sha1(const void* msg, size_t len, const char* key, byte out2
 #endif
 }
 
+static bool ct_memeq(const void* a, const void* b, size_t n) {
+    const byte* pa = (const byte*)a;
+    const byte* pb = (const byte*)b;
+    byte diff = 0;
+    for (size_t i = 0; i < n; ++i)
+        diff |= (byte)(pa[i] ^ pb[i]);
+    return diff == 0;
+}
+
 static bool obp_verify_dmrd_hmac(const byte* pkt, size_t n, const char* key) {
     if (n != DMRD_TOTAL_WITH_HMAC) return false;
     byte mac[20];
     if (obp_hmac_sha1(pkt, DMRD_TOTAL_NO_HMAC, key, mac) != 0) return false;
-    return memcmp(mac, pkt + DMRD_TOTAL_NO_HMAC, 20) == 0;
+    return ct_memeq(mac, pkt + DMRD_TOTAL_NO_HMAC, 20);
 }
 
-static int obp_append_hmac_dmrd(std::vector<byte>& frame55, const char* key) {
+static int obp_append_hmac_dmrd(std::vector<byte>& frame, const char* key) {
     byte mac[20];
-    if (frame55.size() != DMRD_TOTAL_NO_HMAC) return -1;
-    if (obp_hmac_sha1(frame55.data(), DMRD_TOTAL_NO_HMAC, key, mac) != 0) return -1;
-    frame55.insert(frame55.end(), mac, mac + 20);
+    if (frame.size() != DMRD_TOTAL_NO_HMAC) return -1;
+    if (obp_hmac_sha1(frame.data(), DMRD_TOTAL_NO_HMAC, key, mac) != 0) return -1;
+    frame.insert(frame.end(), mac, mac + 20);
     return 0;
 }
 
@@ -3478,11 +3502,10 @@ void obp_forward_dmrd(const byte* pk, int sz, int origin_tag) {
 
         if (P.enhanced) {
             if (obp_append_hmac_dmrd(frame, P.pass) != 0) {
-                log(NULL, "OpenBridge: HMAC unavailable (build w/ USE_OPENSSL) — not sending");
+                log(NULL, "OpenBridge: HMAC unavailable (build w/ USE_OPENSSL) - not sending");
                 return;
             }
         }
-
         sendpacket(P.addr, frame.data(), (int)frame.size());
         P.last_tx_sec = g_sec;
     };
@@ -3494,13 +3517,47 @@ void obp_forward_dmrd(const byte* pk, int sz, int origin_tag) {
 static void obp_fanout_to_locals(byte* pk, int pksize) {
     dword tg = get3(pk + 8);
     talkgroup *g = findgroup(tg, false);
-    if (!g) return;
 
-    slot const *dest = g->subscribers;
-    while (dest) {
-        if (SLOT(dest->slotid)) pk[15] |= 0x80; else pk[15] &= 0x7F;
-        sendpacket(dest->node->addr, pk, pksize);
-        dest = dest->next;
+    if (g) {
+        slot const *dest = g->subscribers;
+        while (dest) {
+            if (dest->node && dest->node->bAuth && getinaddr(dest->node->addr)) {
+                if (SLOT(dest->slotid)) pk[15] |= 0x80; else pk[15] &= 0x7F;
+                sendpacket(dest->node->addr, pk, pksize);
+            }
+            dest = dest->next;
+        }
+    }
+
+    std::map<dword, std::vector<slot*> >::iterator sit = g_static_subscribers.find(tg);
+    if (sit != g_static_subscribers.end()) {
+        std::vector<slot*>& static_slots = (*sit).second;
+        for (size_t i = 0; i < static_slots.size(); ++i) {
+            slot* sdest = static_slots[i];
+            if (!sdest)
+                continue;
+            if (sdest->tg == tg)
+                continue;
+            if (!sdest->node || !sdest->node->bAuth || !getinaddr(sdest->node->addr))
+                continue;
+
+            if (SLOT(sdest->slotid)) pk[15] |= 0x80;
+            else pk[15] &= 0x7F;
+
+            sendpacket(sdest->node->addr, pk, pksize);
+        }
+    }
+
+    if (g_scanner) {
+        slot const *scan = g_scanner->subscribers;
+        while (scan) {
+            if (scan->node && scan->node->bAuth && getinaddr(scan->node->addr)) {
+                if (SLOT(scan->slotid)) pk[15] |= 0x80;
+                else pk[15] &= 0x7F;
+                sendpacket(scan->node->addr, pk, pksize);
+            }
+            scan = scan->next;
+        }
     }
 }
 
@@ -3516,7 +3573,7 @@ static void obp_handle_rx_one(ob_peer& P) {
         if (sz >= 4 && memcmp(buf, "BCKA", 4) == 0) {
             if (P.enhanced) {
                 byte mac[20];
-                if (sz != 24 || obp_hmac_sha1(buf, 4, P.pass, mac) != 0 || memcmp(mac, buf + 4, 20) != 0) {
+                if (sz != 24 || obp_hmac_sha1(buf, 4, P.pass, mac) != 0 || !ct_memeq(mac, buf + 4, 20)) {
                     if (!P.relax_checks) { log(&r, "OpenBridge: bad BCKA HMAC"); continue; }
                 }
             }
@@ -3588,11 +3645,11 @@ static void obp_handle_rx_one(ob_peer& P) {
 			}
 #endif
 
-            const byte* block = buf + 4;
+            const byte* frame = buf;
 
             if (P.enhanced) {
                 if (sz == DMRD_TOTAL_WITH_HMAC) {
-                    if (!obp_verify_dmrd_hmac(buf, (size_t)sz, P.pass)) {
+                    if (!obp_verify_dmrd_hmac(frame, (size_t)sz, P.pass)) {
                         if (!P.relax_checks) { log(&r, "OpenBridge: DMRD HMAC fail"); continue; }
                     }
                 } else {
@@ -3600,13 +3657,13 @@ static void obp_handle_rx_one(ob_peer& P) {
                 }
             }
 
-            ((byte*)block)[11] &= 0x7F;
+            const byte* block = frame + 4;
             dword dtg = ((dword)block[4] << 16) | ((dword)block[5] << 8) | block[6];
             if (!(P.permit_all || tg_in_list(dtg, P.permit_tgs))) continue;
 
             byte out[DMRD_TOTAL_NO_HMAC];
-            memcpy(out, "DMRD", 4);
-            memcpy(out + 4, block, DMRD_BLOCK_LEN);
+            memcpy(out, frame, DMRD_TOTAL_NO_HMAC);
+            out[15] &= 0x7F;
 
             obp_fanout_to_locals(out, DMRD_TOTAL_NO_HMAC);
             P.last_rx_sec = g_sec;
