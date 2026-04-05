@@ -4010,7 +4010,23 @@ int main(int argc, char **argv)
 	pthread_create (&th, NULL, time_thread_proc, NULL);
 
 	for (;;) {
-		if (select_rx(g_sock, 1)) {
+		{
+			fd_set rfds;
+			FD_ZERO(&rfds);
+			FD_SET(g_sock, &rfds);
+			int maxfd = g_sock;
+			for (size_t _i = 0; _i < g_obp_peers.size(); _i++) {
+				ob_peer& _p = g_obp_peers[_i];
+				if (_p.enabled && _p.sock != -1) {
+					FD_SET(_p.sock, &rfds);
+					if (_p.sock > maxfd) maxfd = _p.sock;
+				}
+			}
+			struct timeval tv; tv.tv_sec = 0; tv.tv_usec = 50000;
+			select(maxfd + 1, &rfds, NULL, NULL, &tv);
+		}
+
+		if (select_rx(g_sock, 0)) {
 			byte buf[1000];
 			sockaddr_in addr;
 			socklen_t addrlen = sizeof(addr);
