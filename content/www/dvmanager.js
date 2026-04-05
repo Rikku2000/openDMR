@@ -1,15 +1,22 @@
 const DATABASES = {
   'radioid-users': {
-    label: 'Users [radioid.net]',
-    url: 'https://radioid.net/static/users.json',
+    label: 'Users [DMR-Database]',
+    url: 'https://raw.githubusercontent.com/DMR-Database/dmr-database-appdata/refs/heads/main/users.json',
+    fallbackUrls: [
+      'https://raw.githubusercontent.com/DMR-Database/dmr-database-appdata/refs/heads/main/user.json'
+    ],
     type: 'users',
-    parse: (json) => Array.isArray(json?.results) ? json.results : []
+    parse: (json) => Array.isArray(json)
+      ? json
+      : (Array.isArray(json?.results) ? json.results : [])
   },
   'radioid-repeaters': {
-    label: 'Repeaters [radioid.net]',
-    url: 'https://radioid.net/static/rptrs.json',
+    label: 'Repeaters [DMR-Database]',
+    url: 'https://raw.githubusercontent.com/DMR-Database/dmr-database-appdata/refs/heads/main/rptrs.json',
     type: 'repeaters',
-    parse: (json) => Array.isArray(json?.rptrs) ? json.rptrs : []
+    parse: (json) => Array.isArray(json)
+      ? json
+      : (Array.isArray(json?.rptrs) ? json.rptrs : [])
   },
   'freeradioid-users': {
     label: 'Users [freeradioid.net]',
@@ -299,7 +306,21 @@ async function downloadDatabase() {
   updateUi();
 
   try {
-    const json = await fetchJsonWithProgress(source.url);
+    const urls = [source.url, ...(source.fallbackUrls || [])];
+    let json = null;
+    let lastError = null;
+
+    for (const url of urls) {
+      try {
+        json = await fetchJsonWithProgress(url);
+        break;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    if (json === null) throw lastError || new Error('Download failed');
+
     const parsed = source.parse(json)
       .filter(Boolean)
       .map((record) => ({ ...record, country: normalizedCountry(record) }));
