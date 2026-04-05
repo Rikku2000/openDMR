@@ -617,12 +617,14 @@ async function renderActive() {
     });
 
     const live = data[0];
+    const activeTgs = uniqueNonEmpty(data.map((row) => row.tg));
+    const activeLabel = `${data.length} active call${data.length === 1 ? '' : 's'}`;
     setText('metric-active', String(data.length));
-    setText('metric-active-sub', live ? `Latest radio ${formatRadio(live)}` : 'No live activity');
-    setText('active-meta', live ? `TG ${live.tg} · Slot ${live.slot}` : 'No active calls');
+    setText('metric-active-sub', data.length === 1 && live ? `Latest radio ${formatRadio(live)}` : activeLabel);
+    setText('active-meta', activeTgs.length ? `${activeLabel} · TG ${activeTgs.slice(0, 4).join(', ')}` : activeLabel);
     setText('hero-status', 'Live traffic');
     setChipTone('hero-status', '');
-    setText('hero-summary', live ? `${formatRadio(live)} on TG ${live.tg}` : 'No active transmissions yet');
+    setText('hero-summary', data.length === 1 && live ? `${formatRadio(live)} on TG ${live.tg}` : `${activeLabel} across ${activeTgs.length} talkgroup${activeTgs.length === 1 ? '' : 's'}`);
     document.getElementById('active-panel')?.classList.add('is-live');
   } catch (error) {
     console.error('active:', error);
