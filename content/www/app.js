@@ -345,7 +345,7 @@ async function loadRuntimeConfig() {
   }
 
   setHidden('[data-auth-only]', !runtimeConfig.registrationEnabled);
-  setText('server-version', runtimeConfig.serverVersion ? `Server version ${runtimeConfig.serverVersion}` : 'Server version unavailable');
+  setText('server-version', runtimeConfig.serverVersion ? `Server: ${runtimeConfig.serverVersion}` : 'Server version unavailable');
 
   if (page === 'register') {
     setText('register-auth-state', runtimeConfig.registrationEnabled ? 'Registration enabled' : 'Registration disabled');
