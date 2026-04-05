@@ -6,14 +6,14 @@
 #define DMR_VERSION 1
 #define DMR_RELEASE "0.1.0"
 #define OB_VERSION 0
-#define OB_RELEASE "3 Beta"
+#define OB_RELEASE "5"
 #ifdef HAVE_APRS
 #define APRS_VERSION 0
-#define APRS_RELEASE "2 Alpha"
+#define APRS_RELEASE "3"
 #endif
 #ifdef HAVE_SMS
 #define SMS_VERSION 0
-#define SMS_RELEASE "2 Alpha"
+#define SMS_RELEASE "3"
 #endif
 
 #ifndef WIN32

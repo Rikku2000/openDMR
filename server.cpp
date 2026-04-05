@@ -2693,10 +2693,21 @@ static std::string callsign_json_for_radio(int radio) {
 }
 
 static void api_config(struct io* io) {
+    std::string sv = "v" + std::to_string(DMR_VERSION) + "." + DMR_RELEASE 
+        + " / " + __DATE__ + " - OpenBridge: v" + std::to_string(OB_VERSION) 
+        + "." + OB_RELEASE;
+#ifdef HAVE_APRS
+    sv += " - APRS: v" + std::to_string(APRS_VERSION) + "." + APRS_RELEASE;
+#endif
+#ifdef HAVE_SMS
+    sv += " - SMS: v" + std::to_string(SMS_VERSION) + "." + SMS_RELEASE;
+#endif
+    const std::string server_version = sv;
     std::string body = std::string("{\"authEnabled\":") + (g_auth_enabled ? "1" : "0")
         + ",\"registrationEnabled\":" + (g_auth_enabled ? "1" : "0")
         + ",\"profileEnabled\":" + (g_auth_enabled ? "1" : "0")
-        + ",\"dmrIdsFile\":\"" + json_escape(g_dmrids_file) + "\"}";
+        + ",\"dmrIdsFile\":\"" + json_escape(g_dmrids_file) + "\""
+        + ",\"serverVersion\":\"" + json_escape(server_version) + "\"}";
     http_send_json(io, 200, "OK", body);
 }
 

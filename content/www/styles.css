@@ -151,6 +151,18 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
   gap: 18px;
 }
 
+.app-footer {
+  max-width: 96vw;
+  margin: 18px auto 0;
+  padding: 14px 18px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--surface-strong) 76%, transparent);
+  box-shadow: var(--shadow);
+  color: var(--muted);
+  text-align: center;
+}
+
 .hero-card,
 .panel-card,
 .metric-card {
@@ -639,4 +651,79 @@ body.modal-open {
 
 @media (max-width: 900px) {
   #tab-openbridge { min-width: 1100px; }
+}
+
+.dv-form-grid {
+  align-items: start;
+}
+
+.field select.field-select,
+.field-select {
+  width: 100%;
+  min-height: 48px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,0.04);
+  color: var(--text);
+  outline: none;
+}
+
+.field-select:focus {
+  border-color: var(--line-strong);
+  box-shadow: 0 0 0 4px rgba(89, 195, 255, 0.12);
+}
+
+.field-select option {
+  background: var(--bg-soft);
+  color: var(--text);
+}
+
+.field-select-multi1 {
+  height: 120px;
+  padding: 10px;
+}
+
+.field-select-multi2 {
+  height: 250px;
+  padding: 10px;
+}
+
+.toggle-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.toggle-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  height: 48px;
+  padding: 10px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,0.04);
+  color: var(--text);
+  font-weight: 700;
+}
+
+.toggle-pill input {
+  margin: 0;
+  accent-color: var(--accent);
+  width: 48px;
+}
+
+.toggle-pill span {
+  width: 320px;
+}
+
+@media (max-width: 820px) {
+  .toggle-row {
+    flex-direction: column;
+  }
+
+  .toggle-pill {
+    width: 100%;
+  }
 }

@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>openDMR</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body data-page="dvmanager">
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand-wrap">
+          <button id="theme" class="brand-btn" type="button" aria-label="Toggle theme">
+            <span class="brand-mark">DMR</span>
+            <span>
+              <strong>openDMR</strong>
+              <small>Digital Mobile Radio</small>
+            </span>
+          </button>
+        </div>
+
+        <nav class="top-actions" aria-label="Primary navigation">
+          <button onclick="location.href='index.html';" class="nav-btn" type="button">Dashboard</button>
+          <button onclick="location.href='monitor.html';" class="nav-btn" type="button">Monitor</button>
+          <button onclick="location.href='openbridge.html';" class="nav-btn" type="button">OpenBridge</button>
+          <button onclick="location.href='dvmanager.html';" class="nav-btn is-current" type="button">DV Manager</button>
+          <button onclick="location.href='register.html';" class="nav-btn is-hidden" data-auth-only type="button">Register</button>
+        </nav>
+      </header>
+
+      <main class="page">
+        <section class="hero-card">
+          <div>
+            <h1>Modern network overview for active calls, talkgroups, and system health.</h1>
+            <p class="hero-copy">
+              
+            </p>
+            <div class="hero-chips">
+              <span class="chip chip-soft" id="dv-status-chip">Ready</span>
+              <span class="chip chip-soft" id="dv-source-chip">No dataset loaded</span>
+              <span class="chip chip-soft" id="dv-selection-chip">0 contacts selected</span>
+            </div>
+          </div>
+
+          <div class="hero-side">
+            <div class="clock-card">
+              <div class="clock-label">Local time</div>
+              <div class="clock-value" id="clock-time">--:--:--</div>
+              <div class="clock-date" id="clock-date">Loading date</div>
+            </div>
+            <div class="pulse-card">
+              <div class="pulse-dot"></div>
+              <div>
+                <div class="pulse-title">Browser export</div>
+                <div class="pulse-sub">Files are generated locally in your browser</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="metric-grid" aria-label="DV Manager metrics">
+          <article class="metric-card accent">
+            <div class="metric-label">Records loaded</div>
+            <div class="metric-value" id="dv-metric-records">0</div>
+            <div class="metric-sub" id="dv-metric-records-sub">No dataset downloaded</div>
+          </article>
+          <article class="metric-card">
+            <div class="metric-label">Countries</div>
+            <div class="metric-value metric-value-small" id="dv-metric-countries">0</div>
+            <div class="metric-sub" id="dv-metric-countries-sub">Available filter regions</div>
+          </article>
+          <article class="metric-card">
+            <div class="metric-label">Selected contacts</div>
+            <div class="metric-value metric-value-small" id="dv-metric-selected">0</div>
+            <div class="metric-sub" id="dv-metric-selected-sub">Adjust filters to change scope</div>
+          </article>
+          <article class="metric-card">
+            <div class="metric-label">Export targets</div>
+            <div class="metric-value metric-value-small" id="dv-metric-devices">0</div>
+            <div class="metric-sub" id="dv-metric-devices-sub">Choose one or more radios</div>
+          </article>
+        </section>
+
+        <section class="content-grid">
+          <article class="panel-card panel-span-2 form-card wide-card">
+            <div class="panel-head">
+              <div>
+                <div class="panel-title">Data source and filters</div>
+                <div class="panel-subtitle">Choose a public DMR database, then refine the export scope</div>
+              </div>
+              <div class="panel-meta" id="dv-panel-meta">Waiting for download</div>
+            </div>
+
+            <div class="register-form dv-form-grid">
+              <label class="field field-span-2">
+                <span>Database</span>
+                <select id="dv-database" class="field-select">
+                  <option value="radioid-users">Users [radioid.net]</option>
+                  <option value="radioid-repeaters">Repeaters [radioid.net]</option>
+                  <option value="freeradioid-users">Users [freeradioid.net]</option>
+                </select>
+              </label>
+
+              <label class="field field-span-2">
+                <span>Countries</span>
+                <select id="dv-countries" class="field-select field-select-multi1" multiple disabled></select>
+              </label>
+
+              <div class="field field-span-2">
+                <span>Selection</span>
+                <div class="toggle-row">
+                  <label class="toggle-pill"><input id="dv-all" type="checkbox" disabled checked /> <span>Select all countries</span></label>
+                  <label class="toggle-pill"><input id="dv-no-countries" type="checkbox" disabled /> <span>Only undefined country</span></label>
+                </div>
+              </div>
+
+              <div class="field-actions field-span-2">
+                <button id="dv-download" class="nav-btn submit-btn" type="button">Download database</button>
+                <div id="dv-download-status" class="form-status">Ready.</div>
+              </div>
+            </div>
+          </article>
+
+          <article class="panel-card form-card">
+            <div class="panel-head">
+              <div>
+                <div class="panel-title">Export devices</div>
+                <div class="panel-subtitle">Generate radio-ready contact files</div>
+              </div>
+            </div>
+
+            <label class="field">
+              <span>Devices</span>
+              <select id="dv-devices" class="field-select field-select-multi2" multiple disabled></select>
+            </label>
+
+            <div class="field-actions field-span-2">
+              <button id="dv-export" class="nav-btn submit-btn" type="button" disabled>Export selected devices</button>
+              <div id="dv-export-status" class="form-status">Choose a dataset and at least one device.</div>
+            </div>
+          </article>
+
+          <article class="panel-card form-card">
+            <div class="panel-head">
+              <div>
+                <div class="panel-title">APRS passcode</div>
+                <div class="panel-subtitle">Generate an APRS-IS passcode from a callsign</div>
+              </div>
+            </div>
+
+            <div class="register-form compact-form">
+              <label class="field">
+                <span>Callsign</span>
+                <input id="dv-callsign" type="text" maxlength="32" placeholder="Enter your callsign" />
+              </label>
+              <div class="summary-row">
+                <span>Passcode</span>
+                <strong id="dv-passcode">—</strong>
+              </div>
+              <div class="field-actions">
+                <button id="dv-generate" class="nav-btn submit-btn" type="button">Generate passcode</button>
+              </div>
+            </div>
+          </article>
+
+          <article class="panel-card panel-span-2 wide-card">
+            <div class="panel-head">
+              <div>
+                <div class="panel-title">Selection preview</div>
+                <div class="panel-subtitle">First 5 rows from the current export set</div>
+              </div>
+              <div class="panel-meta" id="dv-preview-meta">No contacts selected</div>
+            </div>
+
+            <div class="table-wrap">
+              <table class="table" id="dv-preview-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Callsign</th>
+                    <th>Name</th>
+                    <th>City</th>
+                    <th>State</th>
+                    <th>Country</th>
+                    <th>Remarks</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr><td colspan="7">Download a dataset to preview contacts</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </article>
+        </section>
+      </main>
+
+      <footer class="app-footer" aria-label="Server version">
+        <span id="server-version">Server version unavailable</span>
+      </footer>
+    </div>
+
+    <script type="module" src="app.js"></script>
+    <script type="module" src="dvmanager.js"></script>
+  </body>
+</html>

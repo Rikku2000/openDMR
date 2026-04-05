@@ -4,7 +4,7 @@ const AUTH_USER_KEY = 'dmr.authUser';
 
 const root = document.documentElement;
 const page = document.body.dataset.page || 'dashboard';
-let runtimeConfig = { authEnabled: false, registrationEnabled: false, profileEnabled: false, dmrIdsFile: '' };
+let runtimeConfig = { authEnabled: false, registrationEnabled: false, profileEnabled: false, dmrIdsFile: '', serverVersion: '' };
 let authState = { token: '', user: null };
 let authPromptedOnProfile = false;
 
@@ -337,13 +337,15 @@ async function loadRuntimeConfig() {
       authEnabled: !!config.authEnabled,
       registrationEnabled: !!config.registrationEnabled,
       profileEnabled: !!config.profileEnabled,
-      dmrIdsFile: config.dmrIdsFile || ''
+      dmrIdsFile: config.dmrIdsFile || '',
+      serverVersion: config.serverVersion || ''
     };
   } catch (error) {
     console.error('config:', error);
   }
 
   setHidden('[data-auth-only]', !runtimeConfig.registrationEnabled);
+  setText('server-version', runtimeConfig.serverVersion ? `Server version ${runtimeConfig.serverVersion}` : 'Server version unavailable');
 
   if (page === 'register') {
     setText('register-auth-state', runtimeConfig.registrationEnabled ? 'Registration enabled' : 'Registration disabled');
