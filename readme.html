@@ -5,7 +5,7 @@
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
 <title>openDMR</title>
-<meta content="openDMR: a cross-platform C++ Digital Mobile Radio (DMR) network server with talkgroup routing, authentication, APRS, SMS, SQLite logging, embedded HTTP monitoring, OpenBridge peers, and a modern multi-page web UI." name="description"/>
+<meta content="openDMR: a cross-platform C++ Digital Mobile Radio (DMR) network server with Homebrew node auth, static TS1/TS2 talkgroup routing, APRS, SMS, SQLite logging, embedded HTTP monitoring, and multi-peer OpenBridge or unified uplink support." name="description"/>
 <style>
     :root {
       --bg: #0f1115;
@@ -236,7 +236,7 @@
 </div>
 <div class="group">
 <h4>Usage</h4>
-<a href="#openbridge">OpenBridge</a>
+<a href="#openbridge">Uplinks &amp; OpenBridge</a>
 <a href="#dvmanager">DV Manager &amp; Browser Tools</a><a href="#webmon">Web Monitor &amp; API</a>
 <a href="#runtime">Runtime &amp; CLI</a>
 <a href="#logging">Logging</a>
@@ -256,50 +256,50 @@
 <section class="card" id="intro">
 <h2>Introduction</h2>
 <p class="lead">
-<strong>openDMR</strong> is a cross-platform C++ Digital Mobile Radio (DMR) master/server that links repeaters,
-          routes talkgroups, authenticates nodes, and optionally integrates APRS, DMR-SMS, and SQLite logging.
-          It is built around a compact core with a focus on performance and clarity.
+<strong>openDMR</strong> is a cross-platform C++ Digital Mobile Radio (DMR) master/server that authenticates Homebrew nodes,
+          routes group and private traffic, supports static TS1/TS2 subscriptions, and optionally adds APRS, DMR-SMS,
+          SQLite logging, an embedded HTTP UI, and multi-peer uplinks/OpenBridge bridging.
         </p>
-<div class="callout ok"><strong>Highlights:</strong> UDP networking, SHA-256 authentication, Parrot echo TG, APRS/SMS modules, SQLite logging, embedded web dashboard/monitor, OpenBridge peers, Linux/Windows support.</div>
+<div class="callout ok"><strong>Highlights:</strong> UDP Homebrew networking, SHA-256 repeater auth, static talkgroup config via <code>RPTC</code>, Parrot echo TG, APRS/SMS modules, SQLite logging, embedded web dashboard/monitor, classic OpenBridge peers, and optional unified uplinks for Homebrew/OpenBridge backbones.</div>
 </section>
 <section class="card" id="features">
 <h2>Features</h2>
 <div class="grid">
 <div class="col-6">
 <ul>
-<li>DMR UDP protocol handling (<code>DMRD</code>, <code>RPTL</code>, <code>RPTK</code>, <code>RPTC</code>, heartbeats)</li>
-<li>Talkgroup management with owner-slot arbitration, dynamic creation, static TS1/TS2 mappings, and scanner TG fan-out</li>
-<li>Parrot TG (<code>9990</code>) recording and playback</li>
-<li>SHA-256 challenge/response auth for repeaters plus per-user CSV password policy</li>
-<li>Optional APRS: heard reports to APRS-IS with DMR-ID to callsign map support</li>
-<li>Optional DMR-SMS: frame buffering, TG filtering, private-call policy, and UDP emission to external tools</li>
+<li>DMR UDP protocol handling for <code>DMRD</code>, <code>RPTL</code>, <code>RPTK</code>, <code>RPTC</code>/<code>RPTO</code>, <code>RPTPING</code>, and <code>FMRPING</code></li>
+<li>Talkgroup routing with owner-slot arbitration, scanner TG fan-out, and per-slot static TS1/TS2 subscriptions</li>
+<li>Private-call forwarding to the last seen destination slot plus Parrot echo playback on TG <code>9990</code></li>
+<li>SHA-256 challenge/response auth with CSV-backed per-node passwords and configurable unknown-ID policy</li>
+<li>Optional APRS heard reporting with DMR-ID to callsign lookup and reconnect/keepalive handling</li>
+<li>Optional DMR-SMS buffering with TG allow-lists, private-call policy, frame/time limits, and UDP emission to external tools</li>
 </ul>
 </div>
 <div class="col-6">
 <ul>
-<li>Optional SQLite3: activity, active-call, online, and recent PTT log views</li>
-<li>Embedded HTTP monitor with static file serving, JSON endpoints, raw <code>/STAT</code> proxying, and monitor event tagging</li>
-<li>Self-service web registration, login, logout, session refresh, and profile updates backed by <code>auth_users.csv</code> and <code>DMRIds.dat</code></li>
-<li>Modern multi-page web UI: Dashboard, Monitor, OpenBridge, DV Manager, Register, and Profile</li>
-<li>Client-side DV Manager that downloads public radio databases, filters by country, exports device-specific contact files, and generates APRS passcodes in-browser</li>
-<li>Up to 3 OpenBridge peers with TG filters, aliasing, DNS refresh, HBLink framing option, relaxed checks, and optional enhanced HMAC</li>
-<li>Radio blacklist support, DMRIds name/callsign lookup, bundled INI parser, and Linux/Windows portability</li>
+<li>Optional SQLite3 activity database with recent log, active-call, and online status views</li>
+<li>Embedded HTTP monitor with static file serving plus JSON/text endpoints for config, auth, log, active calls, OpenBridge status, and raw <code>/STAT</code></li>
+<li>Self-service web registration, login, logout, and profile updates backed by <code>auth_users.csv</code> and the configured <code>DMRIds.dat</code> file</li>
+<li>Modern bundled web UI: Dashboard, Monitor, OpenBridge, DV Manager, Register, and Profile</li>
+<li>Classic multi-peer OpenBridge mode with up to 3 peers, TG filters, DNS refresh, HBLink framing, optional enhanced HMAC, and relaxed checks</li>
+<li>When built with <code>USE_UPLINK</code>: up to 8 generic uplinks plus 3 OpenBridge-class uplinks, including Homebrew login/auth/ping handling and upstream static TS1/TS2 configuration</li>
+<li>Radio blacklist support, DMR-ID profile lookups, bundled INI parsing, and Linux/Windows portability</li>
 </ul>
 </div>
 </div>
 </section>
 <section class="card" id="quickstart">
 <h2>Quick Start</h2>
-<h3>Linux (full feature build)</h3>
-<pre><span class="copy" data-copy="#qs1">Copy</span><code id="qs1">make
+<h3>Linux (full feature build with unified uplinks)</h3>
+<pre><span class="copy" data-copy="#qs1">Copy</span><code id="qs1">g++ server.cpp -o server   -DUSE_SQLITE3 -DUSE_OPENSSL -DHAVE_APRS -DHAVE_SMS -DHAVE_HTTPMODE -DUSE_UPLINK   -lsqlite3 -lcrypto -lssl -lpthread
 ./server</code></pre>
-<h3>Linux (manual compile)</h3>
+<h3>Linux (classic build without <code>USE_UPLINK</code>)</h3>
 <pre><span class="copy" data-copy="#qs2">Copy</span><code id="qs2">g++ server.cpp -o server   -DUSE_SQLITE3 -DUSE_OPENSSL -DHAVE_APRS -DHAVE_SMS -DHAVE_HTTPMODE   -lsqlite3 -lcrypto -lssl -lpthread
 ./server</code></pre>
 <h3>Windows (MinGW)</h3>
 <pre><span class="copy" data-copy="#qs3">Copy</span><code id="qs3">build_mingw.bat
 content\server.exe</code></pre>
-<div class="callout warn"><strong>Note:</strong> The current package ships a web UI under <code>content/www</code> and expects <code>dmr.conf</code>, <code>auth_users.csv</code>, <code>talkgroup.dat</code>, <code>banned.dat</code>, and optional <code>www/DMRIds.dat</code> in the runtime directory.</div>
+<div class="callout warn"><strong>Note:</strong> Run the binary from the runtime directory containing <code>dmr.conf</code>, <code>talkgroup.dat</code>, and <code>banned.dat</code>. <code>auth_users.csv</code> and <code>DMRIds.dat</code> are required when <code>[Auth] Enable=1</code>, and the HTTP monitor expects the configured <code>[Monitor] Root</code> directory to contain the bundled web assets.</div>
 </section>
 <section class="card" id="diagram">
 <h2>Architecture</h2>
@@ -314,65 +314,64 @@ content\server.exe</code></pre>
 <ul>
 <li>C++17 compiler</li>
 <li>POSIX sockets (Linux) or WinSock (Windows)</li>
-<li>(Optional) SQLite3</li>
-<li>(Optional) OpenSSL (if you wire HMAC helpers)</li>
+<li>(Optional) SQLite3 for <code>/api/log</code>, <code>/api/active</code>, and persistent activity state</li>
+<li>(Optional) OpenSSL for enhanced OpenBridge HMAC helpers</li>
 </ul>
 <h3>Compile</h3>
 <pre><code>g++ -O2 -std=c++17 server.cpp -o dmr -lpthread</code></pre>
-<p>With optional modules:</p>
-<pre><code>g++ -O2 -std=c++17 server.cpp -o dmr -DUSE_SQLITE3 -DHAVE_APRS -DHAVE_SMS -lsqlite3 -lpthread</code></pre>
+<p>With common optional modules:</p>
+<pre><code>g++ -O2 -std=c++17 server.cpp -o dmr   -DUSE_SQLITE3 -DUSE_OPENSSL -DHAVE_APRS -DHAVE_SMS -DHAVE_HTTPMODE   -lsqlite3 -lcrypto -lssl -lpthread</code></pre>
+<p>Enable the unified uplink engine:</p>
+<pre><code>g++ -O2 -std=c++17 server.cpp -o dmr   -DUSE_SQLITE3 -DUSE_OPENSSL -DHAVE_APRS -DHAVE_SMS -DHAVE_HTTPMODE -DUSE_UPLINK   -lsqlite3 -lcrypto -lssl -lpthread</code></pre>
 </section>
-
 <section class="card" id="deploy">
 <h2>Deployment Layout</h2>
 <p>The current server bundle is structured for a runnable deployment, not just source-only builds. The embedded monitor serves files directly from the configured document root, so the web assets below are part of the runtime, not optional examples.</p>
 <table>
 <tr><th>Path</th><th>Purpose</th></tr>
-<tr><td><code>server.cpp</code> / <code>server.h</code></td><td>Main server implementation, monitor subsystem, HTTP API handlers, auth/session helpers, and declarations</td></tr>
-<tr><td><code>Makefile</code> / <code>Makefile.mingw</code></td><td>Linux and MinGW build recipes with SQLite, OpenSSL, APRS, SMS, and HTTP monitor enabled</td></tr>
-<tr><td><code>content/dmr.conf</code></td><td>Primary runtime configuration file</td></tr>
-<tr><td><code>content/auth_users.csv</code></td><td>DMR-ID to password database for repeater auth and web login</td></tr>
-<tr><td><code>content/www/DMRIds.dat</code></td><td>Profile directory used by registration, login/profile lookups, and callsign/name enrichment in monitor/log JSON</td></tr>
-<tr><td><code>content/talkgroup.dat</code></td><td>Talkgroup definitions / labels used by the server UI and status output</td></tr>
-<tr><td><code>content/banned.dat</code></td><td>Blocked radio IDs loaded at runtime</td></tr>
-<tr><td><code>content/www/index.html</code>, <code>monitor.html</code>, <code>openbridge.html</code></td><td>Main dashboard, raw /STAT monitor, and OpenBridge health pages</td></tr>
-<tr><td><code>content/www/dvmanager.html</code> + <code>dvmanager.js</code></td><td>Browser-only DMR contact exporter and APRS passcode tool using public datasets</td></tr>
-<tr><td><code>content/www/register.html</code> + <code>profile.html</code></td><td>Self-service account registration and authenticated profile editing pages</td></tr>
-<tr><td><code>content/www/app.js</code> + <code>styles.css</code></td><td>Shared front-end runtime: theme toggle, auth token persistence, polling, rendering helpers, and unified styling</td></tr>
-<tr><td><code>content/log.sqlite</code></td><td>SQLite activity database created/used when compiled with <code>USE_SQLITE3</code></td></tr>
-<tr><td><code>content/server.exe</code></td><td>Prebuilt Windows binary with companion DLLs in the same folder</td></tr>
+<tr><td><code>server.cpp</code> / <code>server.h</code></td><td>Main server implementation, monitor subsystem, HTTP API handlers, auth/session helpers, uplink/OpenBridge logic, and declarations</td></tr>
+<tr><td><code>Makefile</code> / <code>Makefile.mingw</code></td><td>Typical Linux and MinGW build recipes</td></tr>
+<tr><td><code>dmr.conf</code></td><td>Primary runtime configuration file</td></tr>
+<tr><td><code>auth_users.csv</code></td><td>DMR-ID to password database for node auth and web login when <code>[Auth] Enable=1</code></td></tr>
+<tr><td><code>DMRIds.dat</code></td><td>Default profile directory used by registration, login/profile lookups, and callsign/name enrichment; path is configurable via <code>[File] DMRIds</code></td></tr>
+<tr><td><code>talkgroup.dat</code></td><td>Preloaded talkgroups; the server exits at startup if this file is missing</td></tr>
+<tr><td><code>banned.dat</code></td><td>Blocked radio IDs loaded at runtime; the server exits at startup if this file is missing</td></tr>
+<tr><td><code>www/index.html</code>, <code>monitor.html</code>, <code>openbridge.html</code></td><td>Main dashboard, raw <code>/STAT</code> monitor, and OpenBridge status pages</td></tr>
+<tr><td><code>www/dvmanager.html</code> + <code>dvmanager.js</code></td><td>Browser-only DMR contact exporter and APRS passcode tool using public datasets</td></tr>
+<tr><td><code>www/register.html</code> + <code>profile.html</code></td><td>Self-service account registration and authenticated profile editing pages</td></tr>
+<tr><td><code>www/app.js</code> + <code>styles.css</code></td><td>Shared front-end runtime: theme toggle, auth token persistence, polling, rendering helpers, and unified styling</td></tr>
+<tr><td><code>log.sqlite</code></td><td>SQLite activity database created/used when compiled with <code>USE_SQLITE3</code></td></tr>
 </table>
-<div class="callout"><strong>Runtime note:</strong> the sample config points <code>[Monitor] Root</code> to <code>www</code> and <code>[File] DMRIds</code> to <code>www/DMRIds.dat</code>, so a packaged Windows/Linux runtime typically starts from inside the <code>content/</code> directory.</div>
 </section>
 <section class="card" id="config">
 <h2>Configuration Reference</h2>
-<p>openDMR uses an INI-style <code>dmr.conf</code> with <em>[sections]</em> and <em>key=value</em> pairs. Current packaged defaults come from <code>content/dmr.conf</code>.</p>
+<p>openDMR uses an INI-style <code>dmr.conf</code> with <em>[sections]</em> and <em>key=value</em> pairs. Boolean-like values such as <code>yes/no</code>, <code>on/off</code>, and <code>enable/disable</code> are normalized by the built-in parser.</p>
 <div class="grid">
 <div class="col-6">
 <h3>[General]</h3>
 <table>
 <tr><th>Key</th><th>Description</th><th>Default</th></tr>
-<tr><td>Debug</td><td>Enable verbose console logging</td><td><code>1</code> in sample config</td></tr>
+<tr><td>Debug</td><td>Enable verbose console logging</td><td>Uses current global default; commonly <code>0</code></td></tr>
 </table>
 <h3>[Server]</h3>
 <table>
 <tr><th>Key</th><th>Description</th><th>Default</th></tr>
-<tr><td>Host</td><td>Bind / advertised host string used by the server</td><td><code>0.0.0.0</code> in sample config</td></tr>
+<tr><td>Host</td><td>Host string passed into the monitor bind config</td><td><code>fm-funkgateway.de</code> before config override</td></tr>
 <tr><td>Port</td><td>Main UDP server port</td><td><code>62031</code></td></tr>
-<tr><td>Password</td><td>Global network password</td><td><code>passw0rd</code> in sample config</td></tr>
+<tr><td>Password</td><td>Fallback/global Homebrew password</td><td><code>passw0rd</code></td></tr>
 <tr><td>Housekeeping</td><td>Housekeeping interval in minutes</td><td><code>1</code></td></tr>
 </table>
 <h3>[Homebrew]</h3>
 <table>
 <tr><th>Key</th><th>Description</th><th>Default</th></tr>
-<tr><td>KeepNodesAlive</td><td>Whether idle nodes are retained / refreshed</td><td><code>1</code></td></tr>
-<tr><td>NodeTimeout</td><td>Seconds before a node is considered stale</td><td><code>1800</code> in sample config</td></tr>
-<tr><td>RelaxIPChange</td><td>Allow node IP changes without hard rejection</td><td><code>1</code></td></tr>
+<tr><td>KeepNodesAlive</td><td>Whether housekeeping keeps inactive nodes around</td><td><code>1</code></td></tr>
+<tr><td>NodeTimeout</td><td>Seconds before a node is considered stale</td><td><code>1800</code></td></tr>
+<tr><td>RelaxIPChange</td><td>Allow node IP changes during ping handling</td><td><code>1</code></td></tr>
 </table>
 <h3>[Monitor]</h3>
 <table>
 <tr><th>Key</th><th>Description</th><th>Default</th></tr>
-<tr><td>Enable</td><td>Enable embedded HTTP monitor/UI</td><td><code>1</code> in sample config</td></tr>
+<tr><td>Enable</td><td>Enable embedded HTTP monitor/UI</td><td><code>1</code></td></tr>
 <tr><td>Port</td><td>HTTP port for dashboard and API</td><td><code>8080</code></td></tr>
 <tr><td>Root</td><td>Document root for static web assets</td><td><code>www</code></td></tr>
 </table>
@@ -380,9 +379,9 @@ content\server.exe</code></pre>
 <table>
 <tr><th>Key</th><th>Description</th><th>Default</th></tr>
 <tr><td>Auth</td><td>CSV auth database path</td><td><code>auth_users.csv</code></td></tr>
-<tr><td>DMRIds</td><td>DMR-ID profile database used by web registration/profile</td><td><code>www/DMRIds.dat</code> in sample config</td></tr>
+<tr><td>DMRIds</td><td>DMR-ID profile database used by web registration/profile and monitor enrichment</td><td><code>DMRIds.dat</code></td></tr>
 <tr><td>Log</td><td>SQLite log database path</td><td><code>log.sqlite</code></td></tr>
-<tr><td>Talkgroup</td><td>Talkgroup list / alias file</td><td><code>talkgroup.dat</code></td></tr>
+<tr><td>Talkgroup</td><td>Talkgroup preload file</td><td><code>talkgroup.dat</code></td></tr>
 <tr><td>Banned</td><td>Blocked radio ID list</td><td><code>banned.dat</code></td></tr>
 </table>
 </div>
@@ -397,49 +396,70 @@ content\server.exe</code></pre>
 <h3>[Auth]</h3>
 <table>
 <tr><th>Key</th><th>Description</th><th>Default</th></tr>
-<tr><td>Enable</td><td>Enable auth-backed login and node policy</td><td><code>1</code> in sample config</td></tr>
-<tr><td>Reload</td><td>Reload interval for auth file, in seconds</td><td><code>60</code></td></tr>
-<tr><td>UnknownPolicy</td><td>Policy for unknown IDs (1=allow, 0=deny)</td><td><code>0</code></td></tr>
+<tr><td>Enable</td><td>Enable auth-backed web login/registration and per-ID node auth policy</td><td><code>0</code> unless configured</td></tr>
+<tr><td>Reload</td><td>Reload interval for auth file, in seconds</td><td><code>0</code> (manual/initial load only)</td></tr>
+<tr><td>UnknownPolicy</td><td>Policy for unknown IDs (<code>1</code>=use global password, <code>0</code>=deny)</td><td><code>0</code></td></tr>
 </table>
 <h3>[OpenBridge1..3]</h3>
 <table>
-<tr><th>Key</th><th>Description</th><th>Default</th></tr>
-<tr><td>Enable</td><td>Enable this OpenBridge peer</td><td><code>0</code> in sample config</td></tr>
-<tr><td>Alias</td><td>Friendly display name in the web UI</td><td>Optional</td></tr>
-<tr><td>LocalPort</td><td>Local UDP port for the peer</td><td>Falls back from <code>62044</code> upward</td></tr>
-<tr><td>TargetHost</td><td>Remote OpenBridge hostname/IP</td><td>—</td></tr>
-<tr><td>TargetPort</td><td>Remote OpenBridge UDP port</td><td><code>62044</code></td></tr>
-<tr><td>NetworkID</td><td>Remote bridge network identifier</td><td>Optional</td></tr>
-<tr><td>Password</td><td>Peer secret for pings / optional HMAC</td><td>—</td></tr>
-<tr><td>ForceSlot1</td><td>Rewrite inbound sloting to TS1</td><td><code>0</code></td></tr>
+<tr><th>Key</th><th>Description</th><th>Notes</th></tr>
+<tr><td>Enable</td><td>Enable this OpenBridge peer</td><td><code>0</code> by default</td></tr>
+<tr><td>AliasName</td><td>Friendly display name in logs and UI</td><td><code>Name</code>/<code>Alias</code> is not the canonical legacy key</td></tr>
+<tr><td>Port</td><td>Local UDP port in classic mode</td><td>Defaults from <code>62000</code> upward</td></tr>
+<tr><td>LocalPort</td><td>Local UDP port in <code>USE_UPLINK</code> builds</td><td>Falls back to <code>Port</code></td></tr>
+<tr><td>TargetHost</td><td>Remote hostname/IP</td><td>Required</td></tr>
+<tr><td>TargetPort</td><td>Remote OpenBridge port</td><td><code>62000</code></td></tr>
+<tr><td>NetworkId</td><td>Remote bridge network identifier</td><td>Used in OpenBridge framing</td></tr>
+<tr><td>Passphrase</td><td>Peer secret</td><td><code>Password</code> is accepted by the unified uplink loader</td></tr>
+<tr><td>ForceSlot1</td><td>Rewrite outbound traffic to TS1</td><td><code>0</code></td></tr>
 <tr><td>PermitAll</td><td>Allow all talkgroups</td><td><code>1</code></td></tr>
-<tr><td>PermitTGs</td><td>CSV allow-list used when <code>PermitAll=0</code></td><td>—</td></tr>
-<tr><td>EnhancedOBP</td><td>Enable HMAC-based enhanced OpenBridge packets</td><td><code>0</code></td></tr>
-<tr><td>RelaxChecks</td><td>Accept packets with relaxed validation</td><td><code>0</code></td></tr>
-<tr><td>ResolveInterval</td><td>Seconds between DNS refresh attempts</td><td>Configurable</td></tr>
+<tr><td>PermitTGs</td><td>CSV allow-list used when <code>PermitAll=0</code></td><td>Optional</td></tr>
+<tr><td>EnhancedOBP</td><td>Enable HMAC-based enhanced OpenBridge packets</td><td>Requires <code>USE_OPENSSL</code> to sign/verify</td></tr>
+<tr><td>HBLinkCompat</td><td>Use HBLink 53/73-byte framing instead of legacy 55/75-byte framing</td><td><code>1</code> in unified uplink mode</td></tr>
+<tr><td>RelaxChecks</td><td>Accept packets with relaxed validation</td><td><code>0</code> in classic mode, <code>0</code>/<code>1</code> by config in unified mode</td></tr>
+<tr><td>ResolveInterval</td><td>Seconds between DNS refresh attempts</td><td><code>600</code></td></tr>
+</table>
+<h3>[Uplink1..8] <small>(requires <code>USE_UPLINK</code>)</small></h3>
+<table>
+<tr><th>Key</th><th>Description</th><th>Notes</th></tr>
+<tr><td>Enable</td><td>Enable this uplink</td><td><code>0</code> by default</td></tr>
+<tr><td>Type</td><td>High-level uplink type</td><td><code>custom</code>, <code>brandmeister</code>, or <code>tgif</code></td></tr>
+<tr><td>Protocol</td><td>Transport protocol</td><td><code>homebrew</code> or <code>openbridge</code>; inferred from <code>Type</code> when omitted</td></tr>
+<tr><td>Name</td><td>Friendly name</td><td><code>AliasName</code> overrides it</td></tr>
+<tr><td>AliasName</td><td>Friendly name used in logs/UI</td><td>Optional</td></tr>
+<tr><td>LocalPort</td><td>Local UDP port</td><td>Falls back to <code>Port</code> or base <code>62000</code>+index</td></tr>
+<tr><td>TargetHost</td><td>Remote hostname/IP</td><td>Required</td></tr>
+<tr><td>TargetPort</td><td>Remote port</td><td><code>62031</code> for Homebrew, <code>62000</code> for OpenBridge when omitted</td></tr>
+<tr><td>RadioId / NodeId</td><td>Outbound Homebrew identity</td><td>Homebrew only</td></tr>
+<tr><td>Password / Passphrase</td><td>Outbound secret</td><td>Used for Homebrew auth or OpenBridge HMAC</td></tr>
+<tr><td>StaticTS1 / StaticTS2</td><td>CSV TG lists pushed upstream via <code>RPTC</code></td><td>Homebrew only</td></tr>
+<tr><td>ForceSlot1</td><td>Rewrite outbound traffic to TS1</td><td>Optional</td></tr>
+<tr><td>PermitAll / PermitTGs</td><td>Talkgroup policy</td><td>Shared by both protocols</td></tr>
+<tr><td>EnhancedOBP / HBLinkCompat / RelaxChecks</td><td>OpenBridge-specific behavior flags</td><td>OpenBridge only</td></tr>
+<tr><td>ResolveInterval</td><td>Seconds between DNS refresh attempts</td><td><code>600</code></td></tr>
 </table>
 <h3>[APRS]</h3>
 <table>
 <tr><th>Key</th><th>Description</th><th>Default</th></tr>
-<tr><td>Enable</td><td>Enable APRS client</td><td><code>1</code> in sample config</td></tr>
-<tr><td>Server</td><td>APRS-IS host</td><td><code>0.0.0.0</code> in sample config</td></tr>
-<tr><td>Port</td><td>APRS-IS port</td><td><code>14580</code></td></tr>
-<tr><td>Callsign</td><td>APRS login callsign</td><td><code>N0CALL</code> in sample config</td></tr>
+<tr><td>Enable</td><td>Enable APRS client</td><td><code>0</code> unless configured</td></tr>
+<tr><td>Server</td><td>APRS-IS host</td><td>Required when enabled</td></tr>
+<tr><td>Port</td><td>APRS-IS port</td><td>Config-driven</td></tr>
+<tr><td>Callsign</td><td>APRS login callsign</td><td>Required when enabled</td></tr>
 <tr><td>Passcode</td><td>APRS passcode</td><td>Required</td></tr>
-<tr><td>Filter</td><td>Server-side APRS filter string</td><td><code>r/0/0/0</code> in sample config</td></tr>
-<tr><td>Keepalive</td><td>Keepalive cadence in seconds</td><td><code>60</code></td></tr>
-<tr><td>Reconnect</td><td>Reconnect cadence in seconds</td><td><code>30</code></td></tr>
-<tr><td>IdMap</td><td>DMRID to callsign CSV map</td><td><code>aprs_map.csv</code></td></tr>
+<tr><td>Filter</td><td>Server-side APRS filter string</td><td>Falls back to <code>m/0</code> on connect when empty</td></tr>
+<tr><td>Keepalive</td><td>Keepalive cadence in seconds</td><td>Config-driven</td></tr>
+<tr><td>Reconnect</td><td>Reconnect cadence in seconds</td><td>Config-driven</td></tr>
+<tr><td>IdMap</td><td>DMRID-to-callsign CSV map</td><td>Optional</td></tr>
 </table>
 <h3>[SMS]</h3>
 <table>
 <tr><th>Key</th><th>Description</th><th>Default</th></tr>
-<tr><td>Enable</td><td>Enable DMR-SMS forwarding</td><td><code>1</code> in sample config</td></tr>
+<tr><td>Enable</td><td>Enable DMR-SMS forwarding</td><td><code>0</code></td></tr>
 <tr><td>UDPHost</td><td>SMS UDP target host</td><td><code>127.0.0.1</code></td></tr>
 <tr><td>UDPPort</td><td>SMS UDP target port</td><td><code>5555</code></td></tr>
 <tr><td>AllowPrivate</td><td>Permit private SMS</td><td><code>1</code></td></tr>
-<tr><td>PermitAll</td><td>Allow all TG destinations for group SMS</td><td><code>1</code> in sample config</td></tr>
-<tr><td>PermitTGs</td><td>CSV talkgroup allow-list</td><td><code>900999</code> in sample config</td></tr>
+<tr><td>PermitAll</td><td>Allow all TG destinations for group SMS</td><td><code>0</code></td></tr>
+<tr><td>PermitTGs</td><td>CSV talkgroup allow-list</td><td>Optional</td></tr>
 <tr><td>MaxFrames</td><td>Maximum frames per message</td><td><code>30</code></td></tr>
 <tr><td>MaxSeconds</td><td>Maximum buffering window in seconds</td><td><code>5</code></td></tr>
 </table>
@@ -450,7 +470,7 @@ content\server.exe</code></pre>
 <h2>Defaults &amp; Constants</h2>
 <table>
 <tr><th>Symbol</th><th>Value</th><th>Description</th></tr>
-<tr><td><code>DEFAULT_PORT</code></td><td><code>62031</code></td><td>Main DMR UDP port</td></tr>
+<tr><td><code>DEFAULT_PORT</code></td><td><code>62031</code></td><td>Main DMR/Homebrew UDP port</td></tr>
 <tr><td><code>DEFAULT_HOUSEKEEPING_MINUTES</code></td><td><code>1</code></td><td>Default housekeeping cadence</td></tr>
 <tr><td><code>LOW_DMRID</code></td><td><code>1000000</code></td><td>Lower user ID bound</td></tr>
 <tr><td><code>HIGH_DMRID</code></td><td><code>8000000</code></td><td>Upper user ID bound</td></tr>
@@ -458,15 +478,13 @@ content\server.exe</code></pre>
 <tr><td><code>g_scanner_tg</code></td><td><code>777</code></td><td>Scanner group</td></tr>
 <tr><td><code>g_parrot_tg</code></td><td><code>9990</code></td><td>Parrot echo group</td></tr>
 <tr><td><code>g_aprs_tg</code></td><td><code>900999</code></td><td>APRS heard trigger</td></tr>
-<tr><td><code>G.bind_ip</code></td><td><code>127.0.0.1</code></td><td>Embedded monitor fallback bind address before config override</td></tr>
-<tr><td><code>G.port</code></td><td><code>8080</code></td><td>Embedded monitor default HTTP port</td></tr>
 <tr><td><code>WEB_SESSION_TTL</code></td><td><code>86400</code></td><td>Web login session lifetime in seconds (24h)</td></tr>
 <tr><td><code>MONITOR_MAX_CLIENTS</code></td><td><code>128</code></td><td>Maximum concurrent embedded HTTP clients</td></tr>
 <tr><td><code>MONITOR_LISTEN_BACKLOG</code></td><td><code>256</code></td><td>Embedded HTTP listen backlog</td></tr>
 <tr><td><code>MONITOR_CLIENT_TIMEOUT_MS</code></td><td><code>15000</code></td><td>Per-client read/write timeout for the embedded HTTP server</td></tr>
-<tr><td><code>obp_local_port</code></td><td><code>62044</code></td><td>OpenBridge base local port</td></tr>
-<tr><td><code>obp_remote_port</code></td><td><code>62044</code></td><td>OpenBridge default remote port</td></tr>
-<tr><td><code>DMRD_TOTAL_NO_HMAC</code></td><td><code>55</code></td><td>Size of classic DMRD frame</td></tr>
+<tr><td><code>obp_local_port</code></td><td><code>62000</code></td><td>Base local port for OpenBridge and unified uplink fallback allocation</td></tr>
+<tr><td><code>obp_remote_port</code></td><td><code>62000</code></td><td>Default remote OpenBridge port</td></tr>
+<tr><td><code>DMRD_TOTAL_NO_HMAC</code></td><td><code>55</code></td><td>Size of classic Homebrew DMRD frame</td></tr>
 <tr><td><code>DMRD_TOTAL_WITH_HMAC</code></td><td><code>75</code></td><td>Enhanced OpenBridge DMRD size with SHA1 HMAC trailer</td></tr>
 <tr><td><code>MAX_BANNED_SIZE</code></td><td><code>16384</code></td><td>Maximum in-memory banned radio IDs</td></tr>
 </table>
@@ -614,45 +632,62 @@ content\server.exe</code></pre>
 </table>
 </section>
 <section class="card" id="openbridge">
-<h2>OpenBridge</h2>
-<p>The server now supports multiple outbound/inbound OpenBridge peers. Each enabled peer keeps its own socket, target resolution state, last RX/TX timers, optional HMAC mode, and talkgroup filtering policy.</p>
+<h2>Uplinks &amp; OpenBridge</h2>
+<p>openDMR supports two bridging models. In classic builds it loads up to three <code>[OpenBridge1..3]</code> peers. When compiled with <code>USE_UPLINK</code>, it switches to a unified uplink engine that can manage up to eight generic uplinks plus three OpenBridge-class entries through the same forwarding loop.</p>
 <div class="grid">
 <div class="col-6">
-<h3>Capabilities</h3>
+<h3>Classic / OpenBridge capabilities</h3>
 <ul>
-<li>Up to 3 peers via <code>[OpenBridge1]</code> .. <code>[OpenBridge3]</code></li>
+<li>Up to 3 OpenBridge peers in classic builds</li>
 <li>Per-peer TG allow-list with <code>PermitAll</code> / <code>PermitTGs</code></li>
-<li>Friendly alias names surfaced in the monitor UI</li>
-<li>Periodic DNS re-resolution for hostnames</li>
-<li>Optional enhanced OpenBridge mode with HMAC validation/signing when built with <code>USE_OPENSSL</code></li>
-<li>Optional relaxed packet checks for interoperability testing</li>
+<li>Friendly aliases surfaced in logs and the bundled OpenBridge page</li>
+<li>Periodic DNS re-resolution via <code>ResolveInterval</code></li>
+<li>Legacy or HBLink-compatible framing</li>
+<li>Optional enhanced HMAC validation/signing when built with <code>USE_OPENSSL</code></li>
 </ul>
 </div>
 <div class="col-6">
-<h3>Status exposed by web API</h3>
+<h3>Unified uplink additions (<code>USE_UPLINK</code>)</h3>
 <ul>
-<li>Peer name / alias</li>
-<li>Resolved IP and remote target</li>
-<li>Network ID</li>
-<li>Last RX / TX / ping ages</li>
-<li>Enhanced mode flag</li>
-<li>Current permit policy</li>
+<li>Up to 8 <code>[Uplink1..8]</code> entries plus 3 <code>[OpenBridge1..3]</code> entries</li>
+<li>Homebrew uplinks perform <code>RPTL</code>/<code>RPTK</code> login, periodic ping, and optional static <code>TS1</code>/<code>TS2</code> config pushes</li>
+<li>OpenBridge uplinks share the same loop-prevention ring buffer and TG filtering policy</li>
+<li><code>Type=brandmeister</code> or <code>Type=tgif</code> automatically implies the Homebrew protocol when <code>Protocol</code> is omitted</li>
+<li>The bundled <code>/api/openbridge</code> endpoint reports OpenBridge-class peers only; there is no dedicated JSON endpoint for generic Homebrew uplinks yet</li>
 </ul>
 </div>
 </div>
-<pre><code>[OpenBridge1]
+<pre><code>[Uplink1]
 Enable=1
-Alias=Backbone-East
-TargetHost=bridge.example.net
-TargetPort=62044
-NetworkID=1234
+Type=brandmeister
+Protocol=homebrew
+AliasName=BM-Regional
+LocalPort=62000
+TargetHost=master.brandmeister.example
+TargetPort=62031
+RadioId=2629999
 Password=secret
+StaticTS1=91,92
+StaticTS2=262
+PermitAll=0
+PermitTGs=91,92,262
+RelaxChecks=1
+
+[OpenBridge1]
+Enable=1
+AliasName=Backbone-East
+LocalPort=62008
+TargetHost=bridge.example.net
+TargetPort=62000
+NetworkId=1234
+Passphrase=secret
 PermitAll=0
 PermitTGs=91,92,93
 EnhancedOBP=1
-RelaxChecks=0</code></pre>
+HBLinkCompat=1
+RelaxChecks=0
+ResolveInterval=600</code></pre>
 </section>
-
 <section class="card" id="dvmanager">
 <h2>DV Manager &amp; Browser Tools</h2>
 <p>The packaged <code>www</code> folder now includes a browser-side utility page at <code>dvmanager.html</code>. It is separate from the server JSON API: the page downloads public contact datasets directly from the browser, lets you filter records by country or undefined country, and exports device-specific CSV/TXT contact files without writing anything back to the server.</p>
@@ -680,12 +715,12 @@ RelaxChecks=0</code></pre>
 </section>
 <section class="card" id="webmon">
 <h2>Web Monitor &amp; API</h2>
-<p>When compiled with <code>HAVE_HTTPMODE</code> and enabled in <code>[Monitor]</code>, openDMR serves a static web UI and JSON/text endpoints from the configured document root. The embedded HTTP server also enforces a small in-process concurrency model with explicit client limits and timeouts.</p>
+<p>When compiled with <code>HAVE_HTTPMODE</code> and enabled in <code>[Monitor]</code>, openDMR serves a static web UI plus JSON/text endpoints from the configured document root. The embedded HTTP server enforces explicit client limits and timeouts, while sessions are stored in memory only.</p>
 <h3>Included pages</h3>
 <ul>
-<li><code>index.html</code>: dashboard with active calls, recent log data, summary metrics, and mode badges (talk/APRS/SMS/OBP)</li>
+<li><code>index.html</code>: dashboard with active calls, recent log data, summary metrics, and local/APRS/SMS/OpenBridge badges</li>
 <li><code>monitor.html</code>: parsed table view of <code>/api/stat</code> plus collapsible raw <code>/STAT</code> output</li>
-<li><code>openbridge.html</code>: peer health, status, timers, filters, and enhanced/legacy bridge indicators</li>
+<li><code>openbridge.html</code>: OpenBridge peer health, status, timers, filters, and enhanced/HBLink indicators</li>
 <li><code>dvmanager.html</code>: browser-side contact export and APRS passcode tool</li>
 <li><code>register.html</code>: self-service account registration</li>
 <li><code>profile.html</code>: authenticated profile and password update page</li>
@@ -693,24 +728,30 @@ RelaxChecks=0</code></pre>
 <h3>HTTP API</h3>
 <table>
 <tr><th>Endpoint</th><th>Method</th><th>Description</th></tr>
-<tr><td><code>/api/config</code></td><td>GET</td><td>Returns <code>authEnabled</code>, <code>registrationEnabled</code>, <code>profileEnabled</code>, configured <code>dmrIdsFile</code>, and a build/version string assembled from core/APRS/SMS/OpenBridge version macros</td></tr>
-<tr><td><code>/api/login</code></td><td>POST</td><td>Accepts form fields <code>dmrid</code> and <code>password</code>; returns session token plus DMR-ID, callsign, and name</td></tr>
+<tr><td><code>/api/config</code></td><td>GET</td><td>Returns auth/profile flags, configured <code>dmrIdsFile</code>, and a build/version string assembled from core/APRS/SMS/OpenBridge version macros</td></tr>
+<tr><td><code>/api/login</code></td><td>POST</td><td>Accepts form fields <code>dmrid</code> and <code>password</code>; returns a session token plus DMR-ID, callsign, and name</td></tr>
 <tr><td><code>/api/logout</code></td><td>POST</td><td>Invalidates the current session token</td></tr>
 <tr><td><code>/api/profile</code></td><td>GET / POST</td><td>GET returns the current profile for the authenticated token; POST updates <code>name</code> and/or password using <code>currentPassword</code> and <code>newPassword</code></td></tr>
-<tr><td><code>/api/register</code></td><td>POST</td><td>Creates a new auth + DMRIds entry from form fields <code>dmrid</code>, <code>callsign</code>, <code>name</code>, and <code>password</code> when auth/registration is enabled</td></tr>
-<tr><td><code>/api/active</code></td><td>GET</td><td>Current active transmission(s) derived from SQLite state, including callsign/APRS/SMS/OBP markers when available</td></tr>
-<tr><td><code>/api/log?limit=20</code></td><td>GET</td><td>Recent call history from the log database; <code>limit</code> accepts 1..500</td></tr>
-<tr><td><code>/api/openbridge</code></td><td>GET</td><td>OpenBridge peer health, alias, remote target, resolved IP, timing data, filtering, and status</td></tr>
+<tr><td><code>/api/register</code></td><td>POST</td><td>Creates a new auth + DMRIds entry from <code>dmrid</code>, <code>callsign</code>, <code>name</code>, and <code>password</code> when auth is enabled</td></tr>
+<tr><td><code>/api/active</code></td><td>GET</td><td>Current active transmission derived from SQLite state; returns a DB error if SQLite support is not available/open</td></tr>
+<tr><td><code>/api/log?limit=20</code></td><td>GET</td><td>Recent per-radio activity from the log database; <code>limit</code> accepts 1..500</td></tr>
+<tr><td><code>/api/openbridge</code></td><td>GET</td><td>OpenBridge-class peer health, alias, remote target, resolved IP, timing data, filtering, and status; in <code>USE_UPLINK</code> builds this includes only peers whose protocol is <code>openbridge</code></td></tr>
 <tr><td><code>/api/stat</code></td><td>GET</td><td>Proxies the local <code>/STAT</code> UDP output for browser display</td></tr>
 </table>
 <h3>Authentication headers</h3>
-<p>Authenticated requests use a bearer-style token sent in <code>X-Auth-Token</code>. The server also accepts the <code>Authorization</code> header as a fallback. Tokens are stored only in memory on the server, refreshed on each valid request, and expire after 24 hours.</p>
+<p>Authenticated requests use a token in <code>X-Auth-Token</code>. The server also accepts the <code>Authorization</code> header as a fallback. Tokens are stored only in memory, refreshed on each valid request, and expire after 24 hours.</p>
 <div class="callout"><strong>Static serving:</strong> requests that do not hit an <code>/api/*</code> route are resolved against the configured document root. <code>/</code> falls back to <code>index.html</code>.</div>
 </section>
 <section class="card" id="runtime">
 <h2>Runtime &amp; CLI</h2>
-<pre><code># start from packaged content directory
+<pre><code># start from the runtime directory
 ./server
+
+# optional helpers recognized by the current code
+./server -d          # force debug logging
+./server -s          # query local status and exit
+./server --create    # create LOG table when built with USE_SQLITE3
+./server --help      # exits immediately (no usage text is printed)
 
 # local status (UDP)
 echo "/STAT" | nc -u 127.0.0.1 62031
@@ -722,7 +763,7 @@ http://127.0.0.1:8080/openbridge.html
 http://127.0.0.1:8080/dvmanager.html
 http://127.0.0.1:8080/register.html
 http://127.0.0.1:8080/profile.html</code></pre>
-<p>The binary accepts <code>--help</code>. With SQLite enabled, the server auto-creates the <code>LOG</code> table if needed, the front-end polls the main JSON endpoints roughly every 3 seconds, and the browser persists theme/login state in <code>localStorage</code>.</p>
+<p>On startup the server loads <code>talkgroup.dat</code> and <code>banned.dat</code>, resets existing SQLite <code>ACTIVE</code>/<code>CONNECT</code> flags when logging is enabled, and then opens the main UDP socket plus any configured uplink/OpenBridge sockets. The bundled front-end polls the main JSON endpoints roughly every 3 seconds and persists theme/login state in <code>localStorage</code>.</p>
 </section>
 <section class="card" id="logging">
 <h2>Logging</h2>
@@ -732,7 +773,7 @@ http://127.0.0.1:8080/profile.html</code></pre>
 <h2>FAQ</h2>
 <details open="">
 <summary>What happens when a node sends to an unknown TG?</summary>
-<p>The server creates the talkgroup on demand. The slot can then be routed locally, forwarded to OpenBridge peers if permitted, and surfaced in the monitor/log views.</p>
+<p>The server does <strong>not</strong> create arbitrary talkgroups on demand during a normal key-up. Groups must already exist from <code>talkgroup.dat</code> or from static TS1/TS2 configuration; otherwise the server logs a key-up on a non-existent group and unsubscribes the slot.</p>
 </details>
 <details>
 <summary>How are private calls routed?</summary>
@@ -744,11 +785,15 @@ http://127.0.0.1:8080/profile.html</code></pre>
 </details>
 <details>
 <summary>How does registration/profile storage work?</summary>
-<p>Registration adds entries to both the auth CSV and the configured <code>DMRIds</code> data file. Login returns an in-memory session token, profile GET/POST uses that token, and profile updates can change the display name and password for an authenticated DMR-ID.</p>
+<p>Registration adds entries to both the auth CSV and the configured <code>DMRIds.dat</code> file. Login returns an in-memory session token, profile GET/POST uses that token, and profile updates can change the display name and password for an authenticated DMR-ID.</p>
+</details>
+<details>
+<summary>What changes when I build with <code>USE_UPLINK</code>?</summary>
+<p>The server switches from the classic OpenBridge-only loader to the unified uplink engine. That adds <code>[Uplink1..8]</code> support, Homebrew upstream login/auth/ping handling, upstream static <code>TS1</code>/<code>TS2</code> pushes, and still keeps <code>[OpenBridge1..3]</code> available for OpenBridge-class links.</p>
 </details>
 <details>
 <summary>How does Parrot work?</summary>
-<p>On start: create <code>memfile</code> buffer; on end: spawn playback thread to echo frames back at ~20ms cadence.</p>
+<p>On start: create a <code>memfile</code> buffer; on end: spawn a playback thread to echo frames back at roughly 20 ms cadence after a short delay.</p>
 </details>
 <details><summary>Does DV Manager need the server database?</summary><p>No. <code>dvmanager.html</code> downloads public JSON datasets directly in the browser and exports files locally. It is packaged with openDMR for convenience, but it is not backed by the embedded SQLite log or the monitor JSON API.</p></details></section>
 <section class="card" id="contrib">

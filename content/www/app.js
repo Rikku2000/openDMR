@@ -861,6 +861,107 @@ async function renderStat() {
   }
 }
 
+
+function formatTgValue(value) {
+  const text = String(value || '').trim();
+  return text ? text : '—';
+}
+
+async function renderSystemTgs() {
+  const tbody = document.querySelector('#tab-systemstg tbody');
+  if (!tbody) return;
+
+  try {
+    const data = await fetchJSON('/api/systemstg');
+    tbody.innerHTML = '';
+
+    if (!data.length) {
+      const tr = document.createElement('tr');
+      const cell = document.createElement('td');
+      cell.colSpan = 10;
+      cell.textContent = 'No hotspot static talkgroups reported yet';
+      tr.append(cell);
+      tbody.append(tr);
+      setText('systemstg-metric-hotspots', '0');
+      setText('systemstg-metric-hotspots-sub', 'Waiting for MMDVM config frames');
+      setText('systemstg-metric-unique', '0');
+      setText('systemstg-metric-unique-sub', 'No static talkgroups active');
+      setText('systemstg-metric-ts1', '0');
+      setText('systemstg-metric-ts1-sub', 'No TS1 assignments');
+      setText('systemstg-metric-ts2', '0');
+      setText('systemstg-metric-ts2-sub', 'No TS2 assignments');
+      setText('systemstg-meta', 'No hotspot data');
+      setText('systemstg-status', 'Idle');
+      setChipTone('systemstg-status', 'soft');
+      setText('systemstg-summary', 'No static talkgroups announced by hotspots');
+      return;
+    }
+
+    const uniqueTgs = new Set();
+    let ts1Count = 0;
+    let ts2Count = 0;
+
+    data.forEach((row) => {
+      const tr = document.createElement('tr');
+      tr.append(td(row.dmrid || '—', 'numeric emphasis'));
+      tr.append(td(row.callsign || row.name || '—', row.callsign || row.name ? 'emphasis' : ''));
+      tr.append(td(row.node || '—', 'numeric'));
+      tr.append(td(row.ip || '—', row.ip ? 'emphasis' : ''));
+      tr.append(td(row.auth ? 'YES' : 'NO', row.auth ? 'ok' : 'bad'));
+      tr.append(td(row.currentTs1 || '—', row.currentTs1 ? 'numeric' : ''));
+      tr.append(td(row.currentTs2 || '—', row.currentTs2 ? 'numeric' : ''));
+      tr.append(td(formatTgValue(row.staticTs1), row.staticTs1 ? 'emphasis' : ''));
+      tr.append(td(formatTgValue(row.staticTs2), row.staticTs2 ? 'emphasis' : ''));
+      tr.append(td(formatSince(row.lastSeenSec), 'numeric'));
+      tbody.append(tr);
+
+      const ts1 = String(row.staticTs1 || '').split(',').map((item) => item.trim()).filter(Boolean);
+      const ts2 = String(row.staticTs2 || '').split(',').map((item) => item.trim()).filter(Boolean);
+      ts1.forEach((tg) => uniqueTgs.add(tg));
+      ts2.forEach((tg) => uniqueTgs.add(tg));
+      ts1Count += ts1.length;
+      ts2Count += ts2.length;
+    });
+
+    const latest = [...data].sort((a, b) => (a.lastSeenSec ?? 999999) - (b.lastSeenSec ?? 999999))[0];
+    const latestName = latest ? (latest.callsign || latest.name || latest.dmrid || '—') : '—';
+
+    setText('systemstg-metric-hotspots', String(data.length));
+    setText('systemstg-metric-hotspots-sub', data.map((row) => row.callsign || row.dmrid).join(', '));
+    setText('systemstg-metric-unique', String(uniqueTgs.size));
+    setText('systemstg-metric-unique-sub', uniqueTgs.size ? Array.from(uniqueTgs).join(', ') : 'No static talkgroups active');
+    setText('systemstg-metric-ts1', String(ts1Count));
+    setText('systemstg-metric-ts1-sub', ts1Count ? 'Total TS1 static assignments' : 'No TS1 assignments');
+    setText('systemstg-metric-ts2', String(ts2Count));
+    setText('systemstg-metric-ts2-sub', ts2Count ? 'Total TS2 static assignments' : 'No TS2 assignments');
+    setText('systemstg-meta', `${data.length} hotspot${data.length === 1 ? '' : 's'} loaded`);
+    setText('systemstg-status', 'Live');
+    setChipTone('systemstg-status', '');
+    setText('systemstg-summary', `${latestName} seen ${formatSince(latest?.lastSeenSec)} · ${uniqueTgs.size} unique static talkgroup${uniqueTgs.size === 1 ? '' : 's'}`);
+  } catch (error) {
+    console.error('systemstg:', error);
+    tbody.innerHTML = '';
+    const tr = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = 10;
+    cell.textContent = 'Unable to load hotspot static talkgroups';
+    tr.append(cell);
+    tbody.append(tr);
+    setText('systemstg-meta', 'Request failed');
+    setText('systemstg-status', 'Unavailable');
+    setChipTone('systemstg-status', 'bad');
+    setText('systemstg-summary', 'Check that /api/systemstg is available and restart the server');
+    setText('systemstg-metric-hotspots', '0');
+    setText('systemstg-metric-hotspots-sub', 'Request failed');
+    setText('systemstg-metric-unique', '0');
+    setText('systemstg-metric-unique-sub', 'Request failed');
+    setText('systemstg-metric-ts1', '0');
+    setText('systemstg-metric-ts1-sub', 'Request failed');
+    setText('systemstg-metric-ts2', '0');
+    setText('systemstg-metric-ts2-sub', 'Request failed');
+  }
+}
+
 function renderProfileView() {
   if (page !== 'profile') return;
 
@@ -960,6 +1061,7 @@ async function tick() {
   if (page === 'dashboard') jobs.push(renderActive(), renderLog());
   if (page === 'monitor') jobs.push(renderStat());
   if (page === 'openbridge') jobs.push(renderOpenBridge());
+  if (page === 'systemstg') jobs.push(renderSystemTgs());
   if (page === 'register') jobs.push(renderActive(), renderLog(), renderStat());
 
   await Promise.allSettled(jobs);

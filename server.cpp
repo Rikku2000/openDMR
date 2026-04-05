@@ -51,6 +51,10 @@ int obp_remote_port = 62000;
 
 std::vector<ob_peer> g_obp_peers;
 
+#ifdef USE_UPLINK
+std::vector<uplink_peer> g_uplinks;
+#endif
+
 #ifdef HAVE_APRS
 aprs_client g_aprs = {0};
 
@@ -1567,7 +1571,11 @@ void handle_rx (sockaddr_in &addr, byte *pk, int pksize)
 							}
 						}
 
+#ifdef USE_UPLINK
+                        uplink_forward_dmrd(pk, pksize, 0);
+#else
                         obp_forward_dmrd(pk, pksize, 0);
+#endif
 					}
 
 					if (bEndStream && forward_group_frame) {
@@ -3047,6 +3055,63 @@ static void api_active(struct io* io){
     http_send(200, "OK", "application/json", out, io); free(out);
 }
 
+static void api_systemstg(struct io* io){
+    char* out = (char*)malloc(262144);
+    if (!out) { http_send(500, "Server Error", "application/json", "[]", io); return; }
+
+    char* p = out;
+    size_t left = 262144;
+    appendf(&p, &left, "[");
+    int first = 1;
+
+    for (int ix = 0; ix < HIGH_DMRID - LOW_DMRID; ++ix) {
+        nodevector* vec = g_node_index[ix];
+        if (!vec) continue;
+
+        for (int essid = 0; essid < 100; ++essid) {
+            node* n = vec->sub[essid];
+            if (!n) continue;
+            if (n->static_tgs_ts1.empty() && n->static_tgs_ts2.empty()) continue;
+
+            std::string callsign, name, err;
+            read_profile_for_dmrid(n->dmrid, callsign, name, err);
+            std::string static_ts1 = csv_join_dwords(n->static_tgs_ts1);
+            std::string static_ts2 = csv_join_dwords(n->static_tgs_ts2);
+            std::string ip = my_inet_ntoa(n->addr.sin_addr);
+            dword now = g_sec ? g_sec : (dword)time(NULL);
+            int since = (now >= n->hitsec) ? (int)(now - n->hitsec) : 0;
+
+            appendf(&p, &left,
+                "%s{\"node\":%u,\"dmrid\":%u,\"callsign\":\"%s\",\"name\":\"%s\",\"ip\":\"%s\",\"auth\":%d,"
+                "\"lastSeenSec\":%d,\"currentTs1\":%u,\"currentTs2\":%u,\"staticTs1\":\"%s\",\"staticTs2\":\"%s\"}",
+                first ? "" : ",",
+                (unsigned)n->nodeid,
+                (unsigned)n->dmrid,
+                json_escape(callsign).c_str(),
+                json_escape(name).c_str(),
+                json_escape(ip).c_str(),
+                n->bAuth ? 1 : 0,
+                since,
+                (unsigned)n->slots[0].tg,
+                (unsigned)n->slots[1].tg,
+                json_escape(static_ts1).c_str(),
+                json_escape(static_ts2).c_str());
+            first = 0;
+
+            if (left < 2048) {
+                appendf(&p, &left, "]");
+                http_send(200, "OK", "application/json", out, io);
+                free(out);
+                return;
+            }
+        }
+    }
+
+    appendf(&p, &left, "]");
+    http_send(200, "OK", "application/json", out, io);
+    free(out);
+}
+
 static void api_openbridge(struct io* io){
     char* out = (char*)malloc(32768);
     char* p = out; size_t left = 32768;
@@ -3056,6 +3121,40 @@ static void api_openbridge(struct io* io){
     dword now = g_sec ? g_sec : (dword)time(NULL);
     int idx = 0;
 
+#ifdef USE_UPLINK
+    for (auto& ob : g_uplinks) {
+        if (ob.protocol != UPLINK_PROTO_OPENBRIDGE)
+            continue;
+        ++idx;
+        std::string resolved = my_inet_ntoa(ob.addr.sin_addr);
+        const char* status = "idle";
+        if ((int)(now - ob.last_rx_sec) < 60 || (int)(now - ob.last_tx_sec) < 60) status = "active";
+        else if (resolved == "0.0.0.0") status = "unresolved";
+
+        appendf(&p, &left,
+            "%s{\"name\":\"OpenBridge%d\",\"aliasName\":\"%s\",\"enabled\":1,\"localPort\":%d,\"targetHost\":\"%s\",\"targetPort\":%d,\"networkId\":%u,\"lastRxSec\":%u,\"lastTxSec\":%u,\"lastPingSec\":%u,\"secondsSinceRx\":%u,\"secondsSinceTx\":%u,\"resolvedIp\":\"%s\",\"enhanced\":%d,\"permitAll\":%d,\"permitTGs\":\"%s\",\"status\":\"%s\"}",
+            first ? "" : ",",
+            idx,
+            json_escape(ob.alias_name).c_str(),
+            ob.local_port,
+            json_escape(ob.target_host).c_str(),
+            ob.target_port,
+            (unsigned)ob.network_id,
+            (unsigned)ob.last_rx_sec,
+            (unsigned)ob.last_tx_sec,
+            (unsigned)ob.last_ping_sec,
+            (unsigned)((now > ob.last_rx_sec) ? (now - ob.last_rx_sec) : 0),
+            (unsigned)((now > ob.last_tx_sec) ? (now - ob.last_tx_sec) : 0),
+            json_escape(resolved).c_str(),
+            ob.enhanced ? 1 : 0,
+            ob.permit_all ? 1 : 0,
+            json_escape(ob.permit_tgs).c_str(),
+            status);
+
+        first = 0;
+        if (left < 512) break;
+    }
+#else
     for (auto& ob : g_obp_peers) {
         ++idx;
         std::string resolved = my_inet_ntoa(ob.addr.sin_addr);
@@ -3087,6 +3186,7 @@ static void api_openbridge(struct io* io){
         if (left < 512) break;
     }
 
+#endif
     appendf(&p, &left, "]");
     http_send(200, "OK", "application/json", out, io);
     free(out);
@@ -3112,6 +3212,7 @@ static void handle_client(struct io* io){
     else if (strncmp(path, "/api/config", 11)==0)   { api_config(io); io_close(io); return; }
     else if (strncmp(path, "/api/active", 11)==0)   { api_active(io); io_close(io); return; }
     else if (strncmp(path, "/api/openbridge", 15)==0) { api_openbridge(io); io_close(io); return; }
+    else if (strncmp(path, "/api/systemstg", 13)==0) { api_systemstg(io); io_close(io); return; }
     else if (strncmp(path, "/api/stat", 9)==0)      { api_stat(io); io_close(io); return; }
     else if (strncmp(path, "/api/log", 8)==0)       { api_log(io, path); io_close(io); return; }
     if (serve_static(io, path)) { io_close(io); return; }
@@ -3755,6 +3856,523 @@ void obp_handle_rx_all() {
 		obp_handle_rx_one(p);
 }
 
+#ifdef USE_UPLINK
+static const char* uplink_protocol_name(int proto) {
+    switch (proto) {
+        case UPLINK_PROTO_HOMEBREW:   return "homebrew";
+        case UPLINK_PROTO_OPENBRIDGE: return "openbridge";
+        default:                      return "none";
+    }
+}
+
+static const char* uplink_type_name(int type) {
+    switch (type) {
+        case UPLINK_TYPE_BRANDMEISTER: return "brandmeister";
+        case UPLINK_TYPE_TGIF:         return "tgif";
+        default:                       return "custom";
+    }
+}
+
+static int uplink_parse_protocol(PCSTR s, int def_proto) {
+    if (!s || !*s) return def_proto;
+    if (eq(s, "homebrew") || eq(s, "mmdvm") || eq(s, "bm") || eq(s, "tgif"))
+        return UPLINK_PROTO_HOMEBREW;
+    if (eq(s, "openbridge") || eq(s, "obp") || eq(s, "ob"))
+        return UPLINK_PROTO_OPENBRIDGE;
+    return def_proto;
+}
+
+static int uplink_parse_type(PCSTR s) {
+    if (!s || !*s) return UPLINK_TYPE_CUSTOM;
+    if (eq(s, "brandmeister") || eq(s, "bm")) return UPLINK_TYPE_BRANDMEISTER;
+    if (eq(s, "tgif")) return UPLINK_TYPE_TGIF;
+    return UPLINK_TYPE_CUSTOM;
+}
+
+static void uplink_fill_from_section(uplink_peer& p, config_file& c, const char* sec, int fallback_local_port, int uid, int default_proto) {
+    memset(&p, 0, sizeof(p));
+    p.sock = -1;
+    p.uid = uid;
+    p.enabled = c.getint(sec, "Enable", 0) != 0;
+    p.local_port = c.getint(sec, "LocalPort", c.getint(sec, "Port", fallback_local_port));
+    strcpy(p.target_host, c.getstring(sec, "TargetHost", "").c_str());
+    strcpy(p.alias_name, c.getstring(sec, "AliasName", c.getstring(sec, "Name", "").c_str()).c_str());
+    p.type = uplink_parse_type(c.getstring(sec, "Type", "custom").c_str());
+    p.protocol = uplink_parse_protocol(c.getstring(sec, "Protocol", "").c_str(), default_proto);
+    if (p.protocol == UPLINK_PROTO_NONE) {
+        if (p.type == UPLINK_TYPE_BRANDMEISTER || p.type == UPLINK_TYPE_TGIF)
+            p.protocol = UPLINK_PROTO_HOMEBREW;
+    }
+
+    if (p.protocol == UPLINK_PROTO_HOMEBREW) {
+        p.target_port = c.getint(sec, "TargetPort", DEFAULT_PORT);
+        p.radio_id = (dword)c.getint(sec, "RadioId", c.getint(sec, "NodeId", 0));
+        strcpy(p.pass, c.getstring(sec, "Password", c.getstring(sec, "Passphrase", "").c_str()).c_str());
+        strcpy(p.static_tg_ts1, c.getstring(sec, "StaticTS1", "").c_str());
+        strcpy(p.static_tg_ts2, c.getstring(sec, "StaticTS2", "").c_str());
+        p.relax_checks = c.getint(sec, "RelaxChecks", 1) != 0;
+        p.hblink_compat = false;
+        p.enhanced = false;
+        p.network_id = 0;
+    } else {
+        p.target_port   = c.getint(sec, "TargetPort", obp_remote_port);
+        p.network_id    = (dword)c.getint(sec, "NetworkId", 0);
+        strcpy(p.pass,  c.getstring(sec, "Passphrase", c.getstring(sec, "Password", "").c_str()).c_str());
+        p.enhanced      = c.getint(sec, "EnhancedOBP", 0) != 0;
+        p.relax_checks  = c.getint(sec, "RelaxChecks", 0) != 0;
+        p.hblink_compat = c.getint(sec, "HBLinkCompat", 1) != 0;
+    }
+
+    p.force_slot1   = c.getint(sec, "ForceSlot1", 0) != 0;
+    p.permit_all    = c.getint(sec, "PermitAll", 1) != 0;
+    strcpy(p.permit_tgs, c.getstring(sec, "PermitTGs", "").c_str());
+    p.resolve_interval = c.getint(sec, "ResolveInterval", 600);
+    p.last_resolve_sec = p.last_rx_sec = p.last_tx_sec = p.last_ping_sec = g_sec;
+    p.last_login_sec = 0;
+    p.last_cfg_sec = 0;
+    p.login_state = 0;
+    p.static_cfg_sent = false;
+}
+
+void uplink_load_from_config(config_file& c) {
+    g_uplinks.clear();
+    int uid = 1;
+    int fallback = obp_local_port;
+
+    for (int i = 1; i <= 8; ++i) {
+        char sec[32];
+        sprintf(sec, "Uplink%d", i);
+        uplink_peer p;
+        uplink_fill_from_section(p, c, sec, fallback + (i - 1), uid++, UPLINK_PROTO_NONE);
+        if (p.enabled && p.target_host[0] && p.protocol != UPLINK_PROTO_NONE)
+            g_uplinks.push_back(p);
+    }
+
+    for (int i = 1; i <= 3; ++i) {
+        char sec[32];
+        sprintf(sec, "OpenBridge%d", i);
+        uplink_peer p;
+        uplink_fill_from_section(p, c, sec, fallback + (i - 1), uid++, UPLINK_PROTO_OPENBRIDGE);
+        if (p.enabled && p.target_host[0] && p.protocol == UPLINK_PROTO_OPENBRIDGE)
+            g_uplinks.push_back(p);
+    }
+}
+
+static bool uplink_resolve_now_one(uplink_peer& p) {
+    if (!p.enabled) return false;
+    in_addr ip = {};
+    if (!resolve_hostname_ipv4(p.target_host, &ip)) {
+        log(NULL, "Uplink: DNS resolve failed for \"%s\"", p.target_host);
+        return false;
+    }
+    memset(&p.addr, 0, sizeof(p.addr));
+    p.addr.sin_family = AF_INET;
+    p.addr.sin_port   = htons(p.target_port);
+#ifdef WIN32
+    p.addr.sin_addr.S_un.S_addr = ip.S_un.S_addr;
+#else
+    p.addr.sin_addr.s_addr = ip.s_addr;
+#endif
+    p.last_resolve_sec = g_sec;
+    logmsg(LOG_CYAN, 0, "Uplink[%d]: %s %s -> %s:%d\n", p.uid, uplink_protocol_name(p.protocol), p.target_host, my_inet_ntoa(p.addr.sin_addr).c_str(), p.target_port);
+    return true;
+}
+
+void uplink_show_all() {
+    int idx = 0;
+    for (size_t i = 0; i < g_uplinks.size(); ++i) {
+        uplink_peer& p = g_uplinks[i];
+        ++idx;
+        if (!p.enabled)
+            continue;
+
+        logmsg(LOG_GREEN, 0, "\n- Uplink%d Config\n\n", idx);
+        logmsg(LOG_YELLOW, 0, "Type          : %s\n", uplink_type_name(p.type));
+        logmsg(LOG_YELLOW, 0, "Protocol      : %s\n", uplink_protocol_name(p.protocol));
+        logmsg(LOG_YELLOW, 0, "Name          : %s\n", p.alias_name[0] ? p.alias_name : "(none)");
+        logmsg(LOG_YELLOW, 0, "Local Port    : %d\n", p.local_port);
+        logmsg(LOG_YELLOW, 0, "Remote        : %s:%d\n", p.target_host, p.target_port);
+        if (p.protocol == UPLINK_PROTO_HOMEBREW)
+            logmsg(LOG_YELLOW, 0, "RadioId       : %u\n", (unsigned)p.radio_id);
+        else
+            logmsg(LOG_YELLOW, 0, "NetworkId     : %u\n", (unsigned)p.network_id);
+        logmsg(LOG_YELLOW, 0, "Force TS1     : %s\n", p.force_slot1 ? "Yes" : "No");
+        logmsg(LOG_YELLOW, 0, "Permit All    : %s\n", p.permit_all ? "Yes" : "No");
+        if (!p.permit_all)
+            logmsg(LOG_YELLOW, 0, "Permit TGs    : %s\n", p.permit_tgs);
+        if (p.protocol == UPLINK_PROTO_OPENBRIDGE) {
+            logmsg(LOG_YELLOW, 0, "Enhanced      : %s\n", p.enhanced ? "Yes" : "No");
+            logmsg(LOG_YELLOW, 0, "Framing       : %s\n", p.hblink_compat ? "HBLink 53/73" : "Legacy 55/75");
+        }
+        if (p.protocol == UPLINK_PROTO_HOMEBREW) {
+            logmsg(LOG_YELLOW, 0, "Static TS1    : %s\n", p.static_tg_ts1[0] ? p.static_tg_ts1 : "(none)");
+            logmsg(LOG_YELLOW, 0, "Static TS2    : %s\n", p.static_tg_ts2[0] ? p.static_tg_ts2 : "(none)");
+        }
+        logmsg(LOG_YELLOW, 0, "Relax Checks  : %s\n", p.relax_checks ? "Yes" : "No");
+        logmsg(LOG_YELLOW, 0, "Resolve       : %d seconds\n", p.resolve_interval);
+    }
+}
+
+void uplink_open_all() {
+    for (size_t i = 0; i < g_uplinks.size(); ++i) {
+        uplink_peer& p = g_uplinks[i];
+        if (!p.enabled) continue;
+        p.sock = open_udp(p.local_port);
+        if (p.sock == -1) {
+            log(NULL, "Uplink[%d]: @%s:%d failed to open local UDP (%d)", p.uid, p.target_host, p.target_port, GetInetError());
+            p.enabled = false;
+            continue;
+        }
+        uplink_resolve_now_one(p);
+    }
+}
+
+static void uplink_store_stream(uplink_peer& p, dword sid) {
+    p.stream_ring[p.ring_ix++] = sid;
+}
+
+static bool uplink_seen_stream(uplink_peer& p, dword sid) {
+    for (int i = 0; i < 256; ++i)
+        if (p.stream_ring[i] == sid)
+            return true;
+    return false;
+}
+
+static void uplink_homebrew_send_login(uplink_peer& p) {
+    byte out[8];
+    memcpy(out, "RPTL", 4);
+    set4(out + 4, p.radio_id);
+    sendpacket_sock(p.sock, p.addr, out, 8);
+    p.last_tx_sec = g_sec;
+    p.last_login_sec = g_sec;
+    p.login_state = 1;
+}
+
+static void uplink_homebrew_send_auth(uplink_peer& p) {
+    byte out[40];
+    byte hash[32];
+    byte temp[MAX_PASSWORD_SIZE + 8];
+    memcpy(out, "RPTK", 4);
+    set4(out + 4, p.radio_id);
+    set4(temp, p.salt);
+    strcpy((char*)temp + 4, p.pass);
+    make_sha256_hash(temp, 4 + (int)strlen(p.pass), hash, NULL, 0);
+    memcpy(out + 8, hash, 32);
+    sendpacket_sock(p.sock, p.addr, out, 40);
+    p.last_tx_sec = g_sec;
+    p.last_login_sec = g_sec;
+    p.login_state = 2;
+}
+
+static void uplink_homebrew_send_ping(uplink_peer& p) {
+    byte out[11];
+    memcpy(out, "RPTPING", 7);
+    set4(out + 7, p.radio_id);
+    sendpacket_sock(p.sock, p.addr, out, 11);
+    p.last_ping_sec = g_sec;
+    p.last_tx_sec = g_sec;
+}
+
+static void uplink_homebrew_send_config(uplink_peer& p) {
+    if (p.static_cfg_sent)
+        return;
+    if (!p.static_tg_ts1[0] && !p.static_tg_ts2[0]) {
+        p.static_cfg_sent = true;
+        return;
+    }
+
+    std::string cfg = "TS1=";
+    cfg += p.static_tg_ts1;
+    cfg += ";TS2=";
+    cfg += p.static_tg_ts2;
+
+    std::vector<byte> out(8 + cfg.size());
+    memcpy(&out[0], "RPTC", 4);
+    set4(&out[4], p.radio_id);
+    memcpy(&out[8], cfg.data(), cfg.size());
+    sendpacket_sock(p.sock, p.addr, &out[0], (int)out.size());
+    p.last_tx_sec = g_sec;
+    p.last_cfg_sec = g_sec;
+    p.static_cfg_sent = true;
+}
+
+static void uplink_housekeeping_homebrew_one(uplink_peer& p) {
+    if (!p.enabled || p.sock == -1) return;
+    if (p.resolve_interval > 0 && g_sec - p.last_resolve_sec >= (dword)p.resolve_interval)
+        uplink_resolve_now_one(p);
+
+    if (p.login_state == 3) {
+        if (g_sec - p.last_ping_sec >= 10)
+            uplink_homebrew_send_ping(p);
+        if (!p.static_cfg_sent)
+            uplink_homebrew_send_config(p);
+        if (p.last_rx_sec && (g_sec - p.last_rx_sec) >= 60) {
+            p.login_state = 0;
+            p.static_cfg_sent = false;
+        }
+    } else {
+        if (!p.last_login_sec || (g_sec - p.last_login_sec) >= 10)
+            uplink_homebrew_send_login(p);
+    }
+}
+
+static void uplink_housekeeping_openbridge_one(uplink_peer& p) {
+    if (!p.enabled || p.sock == -1) return;
+    if (p.resolve_interval > 0 && g_sec - p.last_resolve_sec >= (dword)p.resolve_interval)
+        uplink_resolve_now_one(p);
+    if (g_sec - p.last_ping_sec >= 20) {
+        if (p.enhanced) {
+            byte bcka[24];
+            if (obp_make_bcka(bcka, p.pass) != 0) {
+                log(NULL, "Uplink OB: unable to build BCKA HMAC - not sending");
+                return;
+            }
+            sendpacket_sock(p.sock, p.addr, bcka, 24);
+        } else {
+            static const byte bcka[4] = {'B','C','K','A'};
+            sendpacket_sock(p.sock, p.addr, bcka, 4);
+        }
+        p.last_ping_sec = g_sec;
+        p.last_tx_sec = g_sec;
+    }
+}
+
+void uplink_housekeeping_all() {
+    for (size_t i = 0; i < g_uplinks.size(); ++i) {
+        uplink_peer& p = g_uplinks[i];
+        if (p.protocol == UPLINK_PROTO_HOMEBREW)
+            uplink_housekeeping_homebrew_one(p);
+        else if (p.protocol == UPLINK_PROTO_OPENBRIDGE)
+            uplink_housekeeping_openbridge_one(p);
+    }
+}
+
+static void uplink_forward_dmrd_homebrew(uplink_peer& P, const byte* pk, int sz, int origin_uid) {
+    byte clean[HS_DMRD_TOTAL_NO_METRICS];
+    if (!pk || sz <= 0 || memcmp(pk, "DMRD", 4) != 0)
+        return;
+    if ((size_t)sz == HS_DMRD_TOTAL_WITH_METRICS) {
+        memcpy(clean, pk, HS_DMRD_TOTAL_NO_METRICS);
+        pk = clean;
+        sz = (int)HS_DMRD_TOTAL_NO_METRICS;
+    }
+    if ((size_t)sz != HS_DMRD_TOTAL_NO_METRICS)
+        return;
+    if (!P.enabled || P.sock == -1 || P.login_state != 3)
+        return;
+    if (origin_uid > 0 && origin_uid == P.uid)
+        return;
+
+    dword tg = get3(pk + 8);
+    if (!(P.permit_all || tg_in_list(tg, P.permit_tgs)))
+        return;
+
+    byte out[HS_DMRD_TOTAL_NO_METRICS];
+    memcpy(out, pk, HS_DMRD_TOTAL_NO_METRICS);
+    set4(out + 11, P.radio_id);
+    if (P.force_slot1)
+        out[15] &= 0x7F;
+
+    dword sid = get4(out + 16);
+    if (origin_uid > 0 && uplink_seen_stream(P, sid))
+        return;
+    uplink_store_stream(P, sid);
+
+    sendpacket_sock(P.sock, P.addr, out, (int)HS_DMRD_TOTAL_NO_METRICS);
+    P.last_tx_sec = g_sec;
+}
+
+static void uplink_forward_dmrd_openbridge(uplink_peer& P, const byte* pk, int sz, int origin_uid) {
+    byte clean[HS_DMRD_TOTAL_NO_METRICS];
+
+    if (!pk || sz <= 0 || memcmp(pk, "DMRD", 4) != 0)
+        return;
+    if (!P.enabled || P.sock == -1)
+        return;
+    if (origin_uid > 0 && origin_uid == P.uid)
+        return;
+
+    if ((size_t)sz == HS_DMRD_TOTAL_WITH_METRICS) {
+        memcpy(clean, pk, HS_DMRD_TOTAL_NO_METRICS);
+        pk = clean;
+        sz = (int)HS_DMRD_TOTAL_NO_METRICS;
+    }
+    if ((size_t)sz != HS_DMRD_TOTAL_NO_METRICS)
+        return;
+
+    dword tg = get3(pk + 8);
+    if (!(P.permit_all || tg_in_list(tg, P.permit_tgs)))
+        return;
+
+    const size_t tx_no_hmac_len = P.hblink_compat ? HB_OBP_DMRD_TOTAL_NO_HMAC : LEGACY_OBP_DMRD_TOTAL_NO_HMAC;
+    std::vector<byte> frame(pk, pk + tx_no_hmac_len);
+    frame[15] &= 0x7F;
+    frame[11] = (P.network_id >> 24) & 0xFF;
+    frame[12] = (P.network_id >> 16) & 0xFF;
+    frame[13] = (P.network_id >>  8) & 0xFF;
+    frame[14] = (P.network_id      ) & 0xFF;
+
+    dword sid = ((dword)frame[16] << 24) | ((dword)frame[17] << 16) | ((dword)frame[18] << 8) | frame[19];
+    if (origin_uid > 0 && uplink_seen_stream(P, sid))
+        return;
+    uplink_store_stream(P, sid);
+
+    if (P.enhanced) {
+        if (obp_append_hmac_dmrd(frame, tx_no_hmac_len, P.pass) != 0) {
+            log(NULL, "Uplink OB: HMAC unavailable (build w/ USE_OPENSSL) - not sending");
+            return;
+        }
+    }
+    sendpacket_sock(P.sock, P.addr, frame.data(), (int)frame.size());
+    P.last_tx_sec = g_sec;
+}
+
+void uplink_forward_dmrd(const byte* pk, int sz, int origin_uid) {
+    for (size_t i = 0; i < g_uplinks.size(); ++i) {
+        uplink_peer& p = g_uplinks[i];
+        if (p.protocol == UPLINK_PROTO_HOMEBREW)
+            uplink_forward_dmrd_homebrew(p, pk, sz, origin_uid);
+        else if (p.protocol == UPLINK_PROTO_OPENBRIDGE)
+            uplink_forward_dmrd_openbridge(p, pk, sz, origin_uid);
+    }
+}
+
+static void uplink_handle_rx_homebrew_one(uplink_peer& P) {
+    if (!P.enabled || P.sock == -1) return;
+
+    while (select_rx(P.sock, 0)) {
+        byte buf[1000];
+        sockaddr_in r; socklen_t rl = sizeof(r);
+        int sz = recvfrom(P.sock, (char*)buf, sizeof(buf), 0, (sockaddr*)&r, &rl);
+        if (sz <= 0) break;
+
+        if (!P.relax_checks && getinaddr(P.addr) && getinaddr(P.addr) != getinaddr(r))
+            continue;
+
+        if (sz == 10 && memcmp(buf, "RPTACK", 6) == 0) {
+            P.last_rx_sec = g_sec;
+            if (P.login_state == 1) {
+                P.salt = get4(buf + 6);
+                uplink_homebrew_send_auth(P);
+            } else {
+                P.login_state = 3;
+                if (!P.static_cfg_sent)
+                    uplink_homebrew_send_config(P);
+            }
+            continue;
+        }
+        if (sz == 10 && memcmp(buf, "MSTNAK", 6) == 0) {
+            P.login_state = 0;
+            P.static_cfg_sent = false;
+            P.last_rx_sec = g_sec;
+            continue;
+        }
+        if (sz == 11 && memcmp(buf, "MSTPONG", 7) == 0) {
+            P.last_rx_sec = g_sec;
+            if (P.login_state < 3)
+                P.login_state = 3;
+            continue;
+        }
+        if (sz == 11 && memcmp(buf, "FMRPONG", 7) == 0) {
+            P.last_rx_sec = g_sec;
+            continue;
+        }
+        if (sz == 55 && memcmp(buf, "DMRD", 4) == 0) {
+            dword tg = get3(buf + 8);
+            if (!(P.permit_all || tg_in_list(tg, P.permit_tgs)))
+                continue;
+            dword sid = get4(buf + 16);
+            uplink_store_stream(P, sid);
+            byte out[HS_DMRD_TOTAL_NO_METRICS];
+            memcpy(out, buf, HS_DMRD_TOTAL_NO_METRICS);
+            obp_fanout_to_locals(out, (int)HS_DMRD_TOTAL_NO_METRICS);
+            uplink_forward_dmrd(out, (int)HS_DMRD_TOTAL_NO_METRICS, P.uid);
+            P.last_rx_sec = g_sec;
+        }
+    }
+}
+
+static void uplink_handle_rx_openbridge_one(uplink_peer& P) {
+    if (!P.enabled || P.sock == -1) return;
+
+    while (select_rx(P.sock, 0)) {
+        byte buf[1000];
+        sockaddr_in r; socklen_t rl = sizeof(r);
+        int sz = recvfrom(P.sock, (char*)buf, sizeof(buf), 0, (sockaddr*)&r, &rl);
+        if (sz <= 0) break;
+
+        if (sz >= 4 && memcmp(buf, "BCKA", 4) == 0) {
+            if (P.enhanced) {
+                byte mac[20];
+                if (sz != 24 || obp_hmac_sha1(buf, 4, P.pass, mac) != 0 || !ct_memeq(mac, buf + 4, 20)) {
+                    if (!P.relax_checks) { log(&r, "Uplink OB: bad BCKA HMAC"); continue; }
+                }
+            }
+            P.last_rx_sec = g_sec;
+            continue;
+        }
+
+        size_t rx_no_hmac_len = 0;
+        bool rx_has_hmac = false;
+
+        if ((size_t)sz == HB_OBP_DMRD_TOTAL_NO_HMAC) {
+            rx_no_hmac_len = HB_OBP_DMRD_TOTAL_NO_HMAC;
+        } else if ((size_t)sz == HB_OBP_DMRD_TOTAL_WITH_HMAC) {
+            rx_no_hmac_len = HB_OBP_DMRD_TOTAL_NO_HMAC;
+            rx_has_hmac = true;
+        } else if ((size_t)sz == LEGACY_OBP_DMRD_TOTAL_NO_HMAC) {
+            rx_no_hmac_len = LEGACY_OBP_DMRD_TOTAL_NO_HMAC;
+        } else if ((size_t)sz == LEGACY_OBP_DMRD_TOTAL_WITH_HMAC) {
+            rx_no_hmac_len = LEGACY_OBP_DMRD_TOTAL_NO_HMAC;
+            rx_has_hmac = true;
+        }
+
+        if (!rx_no_hmac_len)
+            continue;
+        if (memcmp(buf, "DMRD", 4) != 0)
+            continue;
+
+        const byte* frame = buf;
+        if (P.enhanced) {
+            if (rx_has_hmac) {
+                if (!obp_verify_dmrd_hmac(frame, (size_t)sz, rx_no_hmac_len, P.pass)) {
+                    if (!P.relax_checks) { log(&r, "Uplink OB: DMRD HMAC fail"); continue; }
+                }
+            } else {
+                if (!P.relax_checks)
+                    continue;
+            }
+        }
+
+        const byte* block = frame + 4;
+        dword dtg = ((dword)block[4] << 16) | ((dword)block[5] << 8) | block[6];
+        if (!(P.permit_all || tg_in_list(dtg, P.permit_tgs)))
+            continue;
+
+        byte out[HS_DMRD_TOTAL_NO_METRICS];
+        memset(out, 0, sizeof(out));
+        memcpy(out, frame, rx_no_hmac_len);
+        out[15] &= 0x7F;
+
+        dword sid = get4(out + 16);
+        uplink_store_stream(P, sid);
+        obp_fanout_to_locals(out, (int)HS_DMRD_TOTAL_NO_METRICS);
+        uplink_forward_dmrd(out, (int)HS_DMRD_TOTAL_NO_METRICS, P.uid);
+        P.last_rx_sec = g_sec;
+    }
+}
+
+void uplink_handle_rx_all() {
+    for (size_t i = 0; i < g_uplinks.size(); ++i) {
+        uplink_peer& p = g_uplinks[i];
+        if (p.protocol == UPLINK_PROTO_HOMEBREW)
+            uplink_handle_rx_homebrew_one(p);
+        else if (p.protocol == UPLINK_PROTO_OPENBRIDGE)
+            uplink_handle_rx_openbridge_one(p);
+    }
+}
+#endif
+
 void process_config_file()
 {
 	config_file c;
@@ -3788,7 +4406,11 @@ void process_config_file()
 		strcpy (g_auth_file, c.getstring ("File","Auth",g_auth_file).c_str());
 		strcpy (g_dmrids_file, c.getstring ("File","DMRIds",g_dmrids_file).c_str());
 
+#ifdef USE_UPLINK
+		uplink_load_from_config(c);
+#else
 		obp_load_extra_from_config(c);
+#endif
 
 #ifdef HAVE_APRS
 		g_aprs.enabled = c.getint("APRS","Enable",g_aprs.enabled);
@@ -3845,7 +4467,11 @@ void process_config_file()
 		logmsg (LOG_YELLOW, 0, "Policy        : %s\n", g_auth_unknown_default ? "Default" : "Deny");
 	}
 
+#ifdef USE_UPLINK
+	uplink_show_all();
+#else
 	obp_show_all();
+#endif
 
 #ifdef HAVE_APRS
 	if (g_aprs.enabled) {
@@ -3935,7 +4561,11 @@ int main(int argc, char **argv)
 	aprs_init_from_config();
 #endif
 	auth_load_initial();
+#ifdef USE_UPLINK
+	uplink_open_all();
+#else
 	obp_open_all();
+#endif
 	printf ("\n");
 
 #ifdef USE_SQLITE3
@@ -4015,6 +4645,15 @@ int main(int argc, char **argv)
 			FD_ZERO(&rfds);
 			FD_SET(g_sock, &rfds);
 			int maxfd = g_sock;
+#ifdef USE_UPLINK
+			for (size_t _i = 0; _i < g_uplinks.size(); _i++) {
+				uplink_peer& _p = g_uplinks[_i];
+				if (_p.enabled && _p.sock != -1) {
+					FD_SET(_p.sock, &rfds);
+					if (_p.sock > maxfd) maxfd = _p.sock;
+				}
+			}
+#else
 			for (size_t _i = 0; _i < g_obp_peers.size(); _i++) {
 				ob_peer& _p = g_obp_peers[_i];
 				if (_p.enabled && _p.sock != -1) {
@@ -4022,6 +4661,7 @@ int main(int argc, char **argv)
 					if (_p.sock > maxfd) maxfd = _p.sock;
 				}
 			}
+#endif
 			struct timeval tv; tv.tv_sec = 0; tv.tv_usec = 50000;
 			select(maxfd + 1, &rfds, NULL, NULL, &tv);
 		}
@@ -4050,8 +4690,13 @@ int main(int argc, char **argv)
 			}
 		}
 
+#ifdef USE_UPLINK
+        uplink_handle_rx_all();
+        uplink_housekeeping_all();
+#else
         obp_handle_rx_all();
         obp_housekeeping_all();
+#endif
 #ifdef HAVE_APRS
 		aprs_housekeeping();
 #endif

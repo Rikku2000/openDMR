@@ -1,13 +1,13 @@
 # openDMR
 
-openDMR is a cross-platform C++ Digital Mobile Radio (DMR) network server/master that links repeaters, routes talkgroups, authenticates nodes, and can optionally provide APRS forwarding, DMR-SMS handling, SQLite logging, OpenBridge peering, and an embedded multi-page web UI.
+openDMR is a cross-platform C++ Digital Mobile Radio (DMR) network server/master that links repeaters, routes talkgroups, authenticates nodes, and can optionally provide APRS forwarding, DMR-SMS handling, SQLite logging, OpenBridge peering, a newer optional unified uplink subsystem, and an embedded multi-page web UI.
 
 This README reflects the current codebase, including the newer HTTP/session APIs in `server.cpp` / `server.h` and the newer browser assets in `content/www`.
 
 ## Highlights
 
 - Homebrew-style DMR UDP server with `DMRD`, login/auth, config, ping, and logout handling
-- Dynamic talkgroup routing with slot ownership arbitration
+- Talkgroup routing with slot ownership arbitration for preloaded and static-configured talkgroups
 - Static TS1 / TS2 subscriptions from repeater config frames
 - Parrot / echo talkgroup support (`9990` by default)
 - Optional APRS forwarding (`900999` by default)
@@ -16,6 +16,7 @@ This README reflects the current codebase, including the newer HTTP/session APIs
 - Embedded HTTP monitor with static asset serving and JSON endpoints
 - Web registration, login, logout, session refresh, and profile editing
 - OpenBridge peer support with filtering, alias names, hostname re-resolution, and optional enhanced/HMAC framing
+- Optional unified uplink support (`USE_UPLINK`) for `Uplink1..8` plus `OpenBridge1..3` sections
 - Browser-side DV Manager for contact export and APRS passcode generation
 - Linux and Windows / MinGW support
 
@@ -52,7 +53,7 @@ This README reflects the current codebase, including the newer HTTP/session APIs
 ### Core DMR server
 
 - UDP packet handling for login, authentication, config, keepalive, traffic, and logout frames
-- Dynamic talkgroup creation on first use
+- Talkgroup routing for entries loaded from `talkgroup.dat` and static `TS1` / `TS2` repeater config payloads
 - Slot ownership / anti-collision logic per talkgroup
 - Scanner TG fan-out (`777` by default)
 - Private-call routing when the destination radio is known
@@ -148,6 +149,7 @@ Optional:
 - `HAVE_APRS` — APRS support
 - `HAVE_SMS` — SMS support
 - `HAVE_HTTPMODE` — embedded HTTP monitor/UI
+- `USE_UPLINK` — unified uplink subsystem (`Uplink1..8` plus `OpenBridge1..3`)
 
 ### Example builds
 
@@ -228,18 +230,43 @@ openDMR uses an INI-style `dmr.conf`.
 
 ### `[OpenBridge1]` … `[OpenBridge3]`
 
-Current code supports up to three peers, with options including:
+Without `USE_UPLINK`, the classic OpenBridge loader reads up to three peers. The current code looks for keys including:
 
 - `Enable`
-- `Alias`
+- `LocalPort`
 - `TargetHost`
 - `TargetPort`
-- `NetworkID`
-- `Password`
+- `AliasName`
+- `NetworkId`
+- `Passphrase`
+- `ForceSlot1`
 - `PermitAll`
 - `PermitTGs`
 - `EnhancedOBP`
 - `RelaxChecks`
+- `HBLinkCompat`
+- `ResolveInterval`
+
+With `USE_UPLINK`, those same `OpenBridge1..3` sections are folded into the newer unified uplink loader.
+
+### `[Uplink1]` … `[Uplink8]` (`USE_UPLINK`)
+
+When compiled with `USE_UPLINK`, the server also supports general uplink sections with options such as:
+
+- `Enable`
+- `Protocol` (`homebrew` or `openbridge`)
+- `Type` (`custom`, `brandmeister`, `tgif`)
+- `Name` / `AliasName`
+- `LocalPort`
+- `TargetHost`
+- `TargetPort`
+- `RadioId` / `NodeId` (Homebrew uplinks)
+- `Password` / `Passphrase`
+- `StaticTS1` / `StaticTS2`
+- `ForceSlot1`
+- `PermitAll` / `PermitTGs`
+- `RelaxChecks`
+- `ResolveInterval`
 
 ### `[APRS]`
 
@@ -314,7 +341,7 @@ Important built-in values from the current code:
 - max HTTP clients = `128`
 - HTTP listen backlog = `256`
 - client timeout = `15000 ms`
-- default OpenBridge local/remote port = `62044`
+- default OpenBridge local/remote port = `62000`
 
 ## DMR protocol handled by the server
 
@@ -358,10 +385,11 @@ The current implementation handles:
 
 ### Talkgroup routing
 
-- talkgroups are created on demand
+- talkgroups are loaded from `talkgroup.dat` and can also be created from static `TS1` / `TS2` config payloads
+- unknown runtime group traffic is not auto-created on first key-up; it is dropped after unsubscribe handling
 - the first active slot owns the talkgroup until end/timeout
 - static subscribers are tracked separately from dynamic activity
-- scanner behavior follows the latest active source
+- scanner behavior follows the current active source until end/timeout
 
 ### Private calls
 
@@ -406,7 +434,7 @@ These hooks are used by the embedded monitor to tag recent events by source and 
 
 ## OpenBridge
 
-The current code supports multiple OpenBridge peers with per-peer state.
+The current code supports multiple OpenBridge peers with per-peer state. When built with `USE_UPLINK`, OpenBridge peers are managed through the unified uplink subsystem, but the runtime behavior and `/api/openbridge` view still focus on OpenBridge-protocol peers.
 
 Capabilities include:
 
@@ -512,13 +540,13 @@ Returns recent per-radio log rows from SQLite, enriched with callsign and source
 
 ### Authentication header
 
-The browser UI stores the token client-side and sends it in:
+The browser UI stores the token client-side and normally sends it in:
 
 ```http
 X-Auth-Token: <session-token>
 ```
 
-The profile/logout flows use this token. Sessions are stored in memory and refreshed on lookup until expiry.
+The server also accepts the standard `Authorization` header as a fallback. Sessions are stored in memory and refreshed on lookup until expiry.
 
 ## DV Manager
 
@@ -532,7 +560,7 @@ It can:
 - export device-specific contact files for multiple radios and tools
 - generate APRS passcodes locally in the browser
 
-This page does not need to write back to the server database.
+This page does not need to write back to the server database. It does not depend on `/api/log`, `/api/active`, or other embedded monitor endpoints for its export workflow.
 
 ## Front-end runtime additions
 
@@ -541,7 +569,7 @@ The newer shared web assets include:
 - `app.js` — shared auth, polling, rendering, theme persistence, and local storage helpers
 - `styles.css` — common dashboard/theme/card/table styling
 
-The packaged pages use these shared assets for a consistent multi-page UI.
+The packaged pages use these shared assets for a consistent multi-page UI, and the dashboard-style pages poll the main monitor endpoints roughly every 3 seconds.
 
 ## Running the server
 
@@ -549,6 +577,13 @@ From the packaged runtime directory:
 
 ```bash
 ./server
+```
+
+Useful flags:
+
+```text
+-d   enable verbose/debug packet logging
+-s   query a running local instance via UDP /STAT
 ```
 
 Useful local URLs:
@@ -578,7 +613,7 @@ The monitor layer also tags recent activity with source metadata so the UI can d
 
 ### What happens when traffic arrives on an unknown TG?
 
-The talkgroup is created dynamically and routed according to current subscribers and OpenBridge policy.
+The server does not auto-create a new talkgroup from an arbitrary runtime group call. In practice, TGs need to come from `talkgroup.dat` or from static `TS1` / `TS2` config payloads before normal group routing applies.
 
 ### How are private calls handled?
 

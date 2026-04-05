@@ -226,6 +226,54 @@ struct ob_peer {
 	int   		resolve_interval;
 };
 
+#ifdef USE_UPLINK
+enum UplinkProtocol {
+    UPLINK_PROTO_NONE       = 0,
+    UPLINK_PROTO_HOMEBREW   = 1,
+    UPLINK_PROTO_OPENBRIDGE = 2
+};
+
+enum UplinkType {
+    UPLINK_TYPE_CUSTOM       = 0,
+    UPLINK_TYPE_BRANDMEISTER = 1,
+    UPLINK_TYPE_TGIF         = 2
+};
+
+struct uplink_peer {
+    int         uid;
+    sockaddr_in addr;
+    int         sock;
+    int         local_port;
+    bool        enabled;
+    int         protocol;
+    int         type;
+    dword       network_id;
+    dword       radio_id;
+    char        pass[MAX_PASSWORD_SIZE];
+    bool        force_slot1;
+    bool        permit_all;
+    char        permit_tgs[512];
+    dword       last_rx_sec, last_tx_sec, last_ping_sec;
+    dword       stream_ring[256];
+    byte        ring_ix;
+    bool        enhanced;
+    bool        relax_checks;
+    bool        hblink_compat;
+    char        target_host[256];
+    char        alias_name[128];
+    int         target_port;
+    dword       last_resolve_sec;
+    int         resolve_interval;
+    dword       salt;
+    int         login_state;
+    dword       last_login_sec;
+    dword       last_cfg_sec;
+    bool        static_cfg_sent;
+    char        static_tg_ts1[256];
+    char        static_tg_ts2[256];
+};
+#endif
+
 #ifdef HAVE_APRS
 struct aprs_client {
     int   sock;
@@ -530,6 +578,17 @@ void obp_open_all();
 void obp_housekeeping_all();
 void obp_handle_rx_all();
 void obp_forward_dmrd(const byte* pk, int sz, int origin_tag);
+
+#ifdef USE_UPLINK
+extern std::vector<uplink_peer> g_uplinks;
+
+void uplink_load_from_config(class config_file& c);
+void uplink_show_all();
+void uplink_open_all();
+void uplink_housekeeping_all();
+void uplink_handle_rx_all();
+void uplink_forward_dmrd(const byte* pk, int sz, int origin_tag);
+#endif
 
 extern int  g_auth_enabled;
 extern char g_auth_file[260];
