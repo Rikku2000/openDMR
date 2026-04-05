@@ -4349,6 +4349,66 @@ static void uplink_handle_rx_openbridge_one(uplink_peer& P) {
         if (!(P.permit_all || tg_in_list(dtg, P.permit_tgs)))
             continue;
 
+#ifdef USE_SQLITE3
+        dword const radioid = get3(buf + 5);
+        dword const tg = get3(buf + 8);
+        dword const nodeid = get4(buf + 11);
+        int   const flags = buf[15];
+        dword const slotid = SLOTID(nodeid, flags & 0x80);
+
+        bool const bEndStream = (flags & 0x23) == 0x22;
+
+        char date_now[100];
+        time_t now = time(0);
+        strftime(date_now, sizeof(date_now), "%d.%m.%Y / %H:%M:%S", localtime(&now));
+
+        char keybuf[64];
+        sprintf(keybuf, "%u:%u:%u:%u", radioid, tg, SLOT(slotid)+1, nodeid);
+        std::string key(keybuf);
+
+#ifdef VS12
+        if ((radioid != obp_radioid_old) || (tg != obp_tg_old) || (slotid != obp_slotid_old) || (nodeid != obp_nodeid_old)) {
+#else
+        if ((radioid != obp_radioid_old) or (tg != obp_tg_old) or (slotid != obp_slotid_old) or (nodeid != obp_nodeid_old)) {
+#endif
+            sprintf(sql,
+                "INSERT INTO LOG (DATE,RADIO,TG,TIME,SLOT,NODE,ACTIVE,CONNECT) "
+                "VALUES ('%s',%u,%u,0,%u,%u,1,1);",
+                date_now, radioid, tg, (unsigned)(SLOT(slotid)+1), nodeid);
+            rc = sqlite3_exec(db, sql, 0, 0, &zErrMsg);
+            if (rc != SQLITE_OK) sqlite3_free(zErrMsg);
+
+            g_obp_timers[key] = 0;
+        } else {
+            int &timer = g_obp_timers[key];
+            sprintf(sql,
+                "UPDATE LOG set DATE='%s', ACTIVE=1, TIME=%d where RADIO=%u and TG=%u; SELECT * from LOG",
+                date_now, timer / 15, radioid, tg);
+            rc = sqlite3_exec(db, sql, 0, 0, &zErrMsg);
+            if (rc != SQLITE_OK) sqlite3_free(zErrMsg);
+            timer++;
+        }
+
+#ifdef HAVE_HTTPMODE
+        monitor_note_event((int)radioid, (int)tg, MON_SRC_OBP, (tg==g_aprs_tg ? 1:0), 0);
+#endif
+
+        obp_radioid_old = radioid;
+        obp_tg_old      = tg;
+        obp_slotid_old  = slotid;
+        obp_nodeid_old  = nodeid;
+
+        if (bEndStream) {
+            int &timer = g_obp_timers[key];
+            sprintf(sql,
+                "UPDATE LOG set ACTIVE=0, TIME=%d where RADIO=%u and TG=%u; SELECT * from LOG",
+                timer / 15, radioid, tg);
+            rc = sqlite3_exec(db, sql, 0, 0, &zErrMsg);
+            if (rc != SQLITE_OK) sqlite3_free(zErrMsg);
+            timer = 0;
+        }
+#endif
+
         byte out[HS_DMRD_TOTAL_NO_METRICS];
         memset(out, 0, sizeof(out));
         memcpy(out, frame, rx_no_hmac_len);
