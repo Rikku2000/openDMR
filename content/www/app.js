@@ -429,6 +429,28 @@ function td(text, className = '') {
   return cell;
 }
 
+function tgLabelFromParts(tg, tgName = '') {
+  const number = formatTgValue(tg);
+  if (number === '—') return number;
+  const name = String(tgName || '').trim();
+  return name ? `${number} - ${name}` : number;
+}
+
+function tgLabel(row) {
+  return tgLabelFromParts(row?.tg, row?.tgName);
+}
+
+function tgCell(row, className = '') {
+  const label = tgLabel(row);
+  const cell = td(label, className || (row?.tgName ? 'emphasis' : ''));
+  const country = String(row?.tgCountry || '').trim();
+  const name = String(row?.tgName || '').trim();
+  if (country) cell.dataset.tgCountry = country;
+  if (name) cell.dataset.tgName = name;
+  if (country || name) cell.title = [name, country].filter(Boolean).join(' · ');
+  return cell;
+}
+
 function uniqueNonEmpty(values) {
   return [...new Set(values.filter((value) => value !== null && value !== undefined && value !== ''))];
 }
@@ -554,9 +576,9 @@ async function renderOpenBridge() {
     setText('ob-metric-active', String(active.length));
     setText('ob-metric-active-sub', active.length ? activeNames.join(', ') : 'No peer active in the last 60s');
     setText('ob-metric-rx', latestRx ? (latestRx.aliasName || latestRx.name || '—') : '—');
-    setText('ob-metric-rx-sub', latestRx ? `${formatSince(latestRx.secondsSinceRx)} from ${latestRx.targetHost}:${latestRx.targetPort}` : 'Waiting for traffic');
+    setText('ob-metric-rx-sub', latestRx ? `${formatSince(latestRx.secondsSinceRx)} from ${latestRx.targetHost}` : 'Waiting for traffic');
     setText('ob-metric-tx', latestTx ? (latestTx.aliasName || latestTx.name || '—') : '—');
-    setText('ob-metric-tx-sub', latestTx ? `${formatSince(latestTx.secondsSinceTx)} to ${latestTx.targetHost}:${latestTx.targetPort}` : 'Waiting for traffic');
+    setText('ob-metric-tx-sub', latestTx ? `${formatSince(latestTx.secondsSinceTx)} to ${latestTx.targetHost}` : 'Waiting for traffic');
     setText('ob-table-meta', `${data.length} peer${data.length === 1 ? '' : 's'} loaded`);
     setText('ob-hero-status', active.length ? 'Bridge active' : 'Bridge idle');
     setChipTone('ob-hero-status', active.length ? '' : 'soft');
@@ -609,7 +631,7 @@ async function renderActive() {
       const badgeCell = td('');
       badgeCell.append(badgesFor(row));
       tr.append(badgeCell);
-      tr.append(td(row.tg ?? '—'));
+      tr.append(tgCell(row));
       tr.append(td(row.slot ?? '—'));
       tr.append(td(row.node ?? '—'));
       tr.append(td(row.time ?? '—', 'numeric'));
@@ -618,13 +640,14 @@ async function renderActive() {
 
     const live = data[0];
     const activeTgs = uniqueNonEmpty(data.map((row) => row.tg));
+    const activeTgLabels = uniqueNonEmpty(data.map((row) => tgLabel(row)));
     const activeLabel = `${data.length} active call${data.length === 1 ? '' : 's'}`;
     setText('metric-active', String(data.length));
     setText('metric-active-sub', data.length === 1 && live ? `Latest radio ${formatRadio(live)}` : activeLabel);
-    setText('active-meta', activeTgs.length ? `${activeLabel} · TG ${activeTgs.slice(0, 4).join(', ')}` : activeLabel);
+    setText('active-meta', activeTgLabels.length ? `${activeLabel} · ${activeTgLabels.slice(0, 4).join(', ')}` : activeLabel);
     setText('hero-status', 'Live traffic');
     setChipTone('hero-status', '');
-    setText('hero-summary', data.length === 1 && live ? `${formatRadio(live)} on TG ${live.tg}` : `${activeLabel} across ${activeTgs.length} talkgroup${activeTgs.length === 1 ? '' : 's'}`);
+    setText('hero-summary', data.length === 1 && live ? `${formatRadio(live)} on ${tgLabel(live)}` : `${activeLabel} across ${activeTgs.length} talkgroup${activeTgs.length === 1 ? '' : 's'}`);
     document.getElementById('active-panel')?.classList.add('is-live');
   } catch (error) {
     console.error('active:', error);
@@ -655,7 +678,7 @@ async function renderLog() {
         const badgeCell = td('');
         badgeCell.append(badgesFor(row));
         tr.append(badgeCell);
-        tr.append(td(row.tg ?? '—'));
+        tr.append(tgCell(row));
         tr.append(td(row.slot ?? '—'));
         tr.append(td(row.node ?? '—'));
         tr.append(td(row.time ?? '—', 'numeric'));
@@ -667,6 +690,7 @@ async function renderLog() {
     }
 
     const uniqueTGs = uniqueNonEmpty(data.map((row) => row.tg));
+    const uniqueTgLabels = uniqueNonEmpty(data.map((row) => tgLabel(row)));
     const onlineCount = data.filter((row) => row.online).length;
     const openBridgeCount = data.filter((row) => row.src === 2).length;
     const aprsCount = data.filter((row) => row.aprs).length;
@@ -674,7 +698,7 @@ async function renderLog() {
     const talkCount = Math.max(data.length - openBridgeCount - aprsCount - smsCount, 0);
 
     setText('metric-talkgroups', String(uniqueTGs.length));
-    setText('metric-talkgroups-sub', uniqueTGs.length ? `Latest: ${uniqueTGs.slice(0, 3).join(', ')}` : 'Across latest 20 records');
+    setText('metric-talkgroups-sub', uniqueTgLabels.length ? `Latest: ${uniqueTgLabels.slice(0, 3).join(', ')}` : 'Across latest 20 records');
     setText('metric-online', String(onlineCount));
     setText('metric-online-sub', data.length ? `Out of ${data.length} recent records` : 'Seen in recent activity');
     setText('log-meta', data.length ? `${data.length} rows loaded` : 'No recent activity');
@@ -724,16 +748,15 @@ function parseStatText(text) {
       return;
     }
 
-    const nodeMatch = line.match(/^\s*([0-9.]+)\s+ID\s+(\d+)\s+dmrid\s+(\d+)\s+auth\s+(\d+)\s+sec\s+(\d+)$/i);
+    const nodeMatch = line.match(/^\s+ID\s+(\d+)\s+dmrid\s+(\d+)\s+auth\s+(\d+)\s+sec\s+(\d+)$/i);
     if (nodeMatch && currentVector) {
       currentNode = {
         vectorId: currentVector.vectorId,
         radioSlot: currentVector.radioSlot,
-        ip: nodeMatch[1],
-        nodeId: nodeMatch[2],
-        dmrid: nodeMatch[3],
-        auth: nodeMatch[4] === '1',
-        hitSec: nodeMatch[5],
+        nodeId: nodeMatch[1],
+        dmrid: nodeMatch[2],
+        auth: nodeMatch[3] === '1',
+        hitSec: nodeMatch[4],
         slot1: '—',
         slot2: '—'
       };
@@ -908,7 +931,6 @@ async function renderSystemTgs() {
       tr.append(td(row.dmrid || '—', 'numeric emphasis'));
       tr.append(td(row.callsign || row.name || '—', row.callsign || row.name ? 'emphasis' : ''));
       tr.append(td(row.node || '—', 'numeric'));
-      tr.append(td(row.ip || '—', row.ip ? 'emphasis' : ''));
       tr.append(td(row.auth ? 'YES' : 'NO', row.auth ? 'ok' : 'bad'));
       tr.append(td(row.currentTs1 || '—', row.currentTs1 ? 'numeric' : ''));
       tr.append(td(row.currentTs2 || '—', row.currentTs2 ? 'numeric' : ''));

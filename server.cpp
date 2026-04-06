@@ -31,6 +31,10 @@ int g_monitor_enabled = 1;
 int g_monitor_port = 8080;
 char g_monitor_root[256] = "www";
 
+static void trim_spaces(char* s);
+struct talkgroup;
+talkgroup * findgroup (dword tg, bool bCreateIfNecessary);
+
 typedef struct {
     int  used;
     int  radio;
@@ -391,6 +395,8 @@ struct talkgroup
 	dword		ownerslot;
 	dword		tick;
 	slot		*subscribers;
+	std::string	country;
+	std::string	name;
 
 	talkgroup() {
 		
@@ -398,11 +404,82 @@ struct talkgroup
 		ownerslot = 0;
 		tick = 0;
 		subscribers = NULL;
+		country.clear();
+		name.clear();
 	}
 };
 
 static std::map<dword, talkgroup*> g_talkgroups;
 talkgroup *g_scanner;
+
+static talkgroup* talkgroup_lookup(dword tg)
+{
+	return findgroup(tg, false);
+}
+
+static std::string talkgroup_name_for(dword tg)
+{
+	talkgroup* g = talkgroup_lookup(tg);
+	return g ? g->name : "";
+}
+
+static std::string talkgroup_country_for(dword tg)
+{
+	talkgroup* g = talkgroup_lookup(tg);
+	return g ? g->country : "";
+}
+
+static void load_talkgroup_line(const char* raw)
+{
+	if (!raw)
+		return;
+
+	char line[1024];
+	strncpy(line, raw, sizeof(line) - 1);
+	line[sizeof(line) - 1] = 0;
+	trim_spaces(line);
+
+	if (!line[0] || line[0] == '#')
+		return;
+
+	char* semi1 = strchr(line, ';');
+	if (!semi1) {
+		dword tg = (dword)atoi(line);
+		if (tg)
+			findgroup(tg, true);
+		return;
+	}
+
+	*semi1++ = 0;
+	trim_spaces(line);
+	trim_spaces(semi1);
+
+	dword tg = (dword)atoi(line);
+	if (!tg)
+		return;
+
+	std::string country;
+	std::string name;
+
+	char* semi2 = strchr(semi1, ';');
+	if (semi2) {
+		*semi2++ = 0;
+		trim_spaces(semi1);
+		trim_spaces(semi2);
+		country = semi1;
+		name = semi2;
+	}
+	else {
+		name = semi1;
+	}
+
+	talkgroup* g = findgroup(tg, true);
+	if (!g)
+		return;
+
+	g->country = country;
+	g->name = name;
+}
 
 std::string my_inet_ntoa (in_addr in)
 {
@@ -1241,7 +1318,7 @@ void _dump_nodes(std::string &ret)
 				node const *n = g_node_index[ix]->sub[essid];
 
 				if (n) {
-					sprintf (temp, "\t%s ID %d dmrid %d auth %d sec %u\n", my_inet_ntoa(n->addr.sin_addr).c_str(), n->nodeid, n->dmrid, n->bAuth, n->hitsec);
+					sprintf (temp, "\tID %d dmrid %d auth %d sec %u\n", n->nodeid, n->dmrid, n->bAuth, n->hitsec);
 					ret += temp;
 
 					if (n->slots[0].tg) {
@@ -3072,13 +3149,18 @@ static void api_log(struct io* io, const char* path){
 		int src=0, aprs=0, sms=0;
 		mark_read(radio, &src, &aprs, &sms);
         std::string callsign = callsign_json_for_radio(radio);
+		std::string tg_name = talkgroup_name_for((dword)tg);
+		std::string tg_country = talkgroup_country_for((dword)tg);
 
 		appendf(&p,&left,
 		  "%s{\"id\":%d,\"date\":\"%s\",\"radio\":%d,\"callsign\":\"%s\",\"tg\":%d,\"slot\":%d,"
+		  "\"tgName\":\"%s\",\"tgCountry\":\"%s\","
 		  "\"node\":%d,\"time\":%d,\"active\":%d,\"online\":%d,\"connect\":%d,"
 		  "\"src\":%d,\"aprs\":%d,\"sms\":%d}",
 		  first?"":",",
-		  id, date?(const char*)date:"", radio, json_escape(callsign).c_str(), tg, slot, node, sec, active, online, conn,
+		  id, date?(const char*)date:"", radio, json_escape(callsign).c_str(), tg, slot,
+		  json_escape(tg_name).c_str(), json_escape(tg_country).c_str(),
+		  node, sec, active, online, conn,
 		  src, aprs, sms);
 
         first = 0;
@@ -3112,11 +3194,15 @@ static void api_active(struct io* io){
 		int src=0, aprs=0, sms=0;
 		mark_read(radio, &src, &aprs, &sms);
         std::string callsign = callsign_json_for_radio(radio);
+		std::string tg_name = talkgroup_name_for((dword)tg);
+		std::string tg_country = talkgroup_country_for((dword)tg);
 
 		appendf(&p,&left,
-		  "%s{\"date\":\"%s\",\"radio\":%d,\"callsign\":\"%s\",\"tg\":%d,\"slot\":%d,\"node\":%d,\"time\":%d,"
+		  "%s{\"date\":\"%s\",\"radio\":%d,\"callsign\":\"%s\",\"tg\":%d,\"slot\":%d,"
+		  "\"tgName\":\"%s\",\"tgCountry\":\"%s\",\"node\":%d,\"time\":%d,"
 		  "\"src\":%d,\"aprs\":%d,\"sms\":%d}",
-		  first?"":",", date?(const char*)date:"", radio, json_escape(callsign).c_str(), tg, slot, node, sec,
+		  first?"":",", date?(const char*)date:"", radio, json_escape(callsign).c_str(), tg, slot,
+		  json_escape(tg_name).c_str(), json_escape(tg_country).c_str(), node, sec,
 		  src, aprs, sms);
         first=0;
         if (left < 256) break;
@@ -4696,7 +4782,7 @@ int main(int argc, char **argv)
     if (fp_tg == NULL)
         exit (EXIT_FAILURE);
     while (fgets (line, sizeof (line), fp_tg))
-		findgroup (atoi (line), true);
+		load_talkgroup_line(line);
     fclose (fp_tg);
 
 	logmsg (LOG_GREEN, 0, "- Check Banned\n\n", u_banned[i]);
