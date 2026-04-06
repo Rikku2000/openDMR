@@ -234,7 +234,44 @@ char sql[1024];
 int rc;
 
 static std::map<std::string,int> g_obp_timers;
-static std::map<std::string,int> g_log_active_rows;
+
+struct sqlite_log_row_state {
+	int id;
+	int last_time_secs;
+	int last_connect;
+};
+
+static std::map<std::string, sqlite_log_row_state> g_log_active_rows;
+static sqlite3_stmt* g_log_insert_stmt = NULL;
+static sqlite3_stmt* g_log_update_stmt = NULL;
+
+static int sqlite_log_prepare_stmt(sqlite3_stmt** st, const char* q)
+{
+	if (!db) return SQLITE_MISUSE;
+	if (*st) return SQLITE_OK;
+	return sqlite3_prepare_v2(db, q, -1, st, NULL);
+}
+
+static void sqlite_log_reset_stmt(sqlite3_stmt* st)
+{
+	if (!st) return;
+	sqlite3_reset(st);
+	sqlite3_clear_bindings(st);
+}
+
+static void sqlite_log_finalize_stmt(sqlite3_stmt** st)
+{
+	if (*st) {
+		sqlite3_finalize(*st);
+		*st = NULL;
+	}
+}
+
+static void sqlite_log_shutdown()
+{
+	sqlite_log_finalize_stmt(&g_log_insert_stmt);
+	sqlite_log_finalize_stmt(&g_log_update_stmt);
+}
 
 static void sqlite_log_prune_rows(int keep)
 {
@@ -256,24 +293,24 @@ static int sqlite_log_insert_row(const char* date_now, dword radio, dword tg, in
 
 	const char* q =
 		"INSERT INTO LOG (DATE,RADIO,TG,TIME,SLOT,NODE,ACTIVE,CONNECT) VALUES (?,?,?,?,?,?,?,?)";
-	sqlite3_stmt* st = NULL;
-	if (sqlite3_prepare_v2(db, q, -1, &st, NULL) != SQLITE_OK)
+	if (sqlite_log_prepare_stmt(&g_log_insert_stmt, q) != SQLITE_OK)
 		return 0;
 
-	sqlite3_bind_text(st, 1, date_now, -1, SQLITE_TRANSIENT);
-	sqlite3_bind_int(st, 2, (int)radio);
-	sqlite3_bind_int(st, 3, (int)tg);
-	sqlite3_bind_int(st, 4, time_secs);
-	sqlite3_bind_int(st, 5, slot);
-	sqlite3_bind_int(st, 6, (int)node);
-	sqlite3_bind_int(st, 7, active);
-	sqlite3_bind_int(st, 8, connect);
+	sqlite_log_reset_stmt(g_log_insert_stmt);
+	sqlite3_bind_text(g_log_insert_stmt, 1, date_now, -1, SQLITE_TRANSIENT);
+	sqlite3_bind_int(g_log_insert_stmt, 2, (int)radio);
+	sqlite3_bind_int(g_log_insert_stmt, 3, (int)tg);
+	sqlite3_bind_int(g_log_insert_stmt, 4, time_secs);
+	sqlite3_bind_int(g_log_insert_stmt, 5, slot);
+	sqlite3_bind_int(g_log_insert_stmt, 6, (int)node);
+	sqlite3_bind_int(g_log_insert_stmt, 7, active);
+	sqlite3_bind_int(g_log_insert_stmt, 8, connect);
 
 	int id = 0;
-	if (sqlite3_step(st) == SQLITE_DONE)
+	if (sqlite3_step(g_log_insert_stmt) == SQLITE_DONE)
 		id = (int)sqlite3_last_insert_rowid(db);
 
-	sqlite3_finalize(st);
+	sqlite_log_reset_stmt(g_log_insert_stmt);
 	return id;
 }
 
@@ -283,41 +320,50 @@ static void sqlite_log_update_row(int id, const char* date_now, int time_secs, i
 
 	const char* q =
 		"UPDATE LOG SET DATE=?, TIME=?, ACTIVE=?, CONNECT=? WHERE ID=?";
-	sqlite3_stmt* st = NULL;
-	if (sqlite3_prepare_v2(db, q, -1, &st, NULL) != SQLITE_OK)
+	if (sqlite_log_prepare_stmt(&g_log_update_stmt, q) != SQLITE_OK)
 		return;
 
-	sqlite3_bind_text(st, 1, date_now, -1, SQLITE_TRANSIENT);
-	sqlite3_bind_int(st, 2, time_secs);
-	sqlite3_bind_int(st, 3, active);
-	sqlite3_bind_int(st, 4, connect);
-	sqlite3_bind_int(st, 5, id);
-	sqlite3_step(st);
-	sqlite3_finalize(st);
+	sqlite_log_reset_stmt(g_log_update_stmt);
+	sqlite3_bind_text(g_log_update_stmt, 1, date_now, -1, SQLITE_TRANSIENT);
+	sqlite3_bind_int(g_log_update_stmt, 2, time_secs);
+	sqlite3_bind_int(g_log_update_stmt, 3, active);
+	sqlite3_bind_int(g_log_update_stmt, 4, connect);
+	sqlite3_bind_int(g_log_update_stmt, 5, id);
+	sqlite3_step(g_log_update_stmt);
+	sqlite_log_reset_stmt(g_log_update_stmt);
 }
 
 static void sqlite_log_touch_active(const std::string& key, const char* date_now, dword radio, dword tg, int slot, dword node, int time_secs, int connect)
 {
-	std::map<std::string,int>::iterator it = g_log_active_rows.find(key);
+	std::map<std::string, sqlite_log_row_state>::iterator it = g_log_active_rows.find(key);
 	if (it == g_log_active_rows.end()) {
 		int id = sqlite_log_insert_row(date_now, radio, tg, slot, node, time_secs, 1, connect);
 		if (id > 0) {
-			g_log_active_rows[key] = id;
+			sqlite_log_row_state state;
+			state.id = id;
+			state.last_time_secs = time_secs;
+			state.last_connect = connect;
+			g_log_active_rows[key] = state;
 			sqlite_log_prune_rows(20);
 		}
 		return;
 	}
 
-	sqlite_log_update_row(it->second, date_now, time_secs, 1, connect);
+	if (it->second.last_time_secs == time_secs && it->second.last_connect == connect)
+		return;
+
+	sqlite_log_update_row(it->second.id, date_now, time_secs, 1, connect);
+	it->second.last_time_secs = time_secs;
+	it->second.last_connect = connect;
 }
 
 static void sqlite_log_finish_active(const std::string& key, const char* date_now, int time_secs)
 {
-	std::map<std::string,int>::iterator it = g_log_active_rows.find(key);
+	std::map<std::string, sqlite_log_row_state>::iterator it = g_log_active_rows.find(key);
 	if (it == g_log_active_rows.end())
 		return;
 
-	sqlite_log_update_row(it->second, date_now, time_secs, 0, 1);
+	sqlite_log_update_row(it->second.id, date_now, time_secs, 0, 1);
 	g_log_active_rows.erase(it);
 }
 
@@ -2518,16 +2564,28 @@ static MonMark mark_copy_for_radio(int radio){
 }
 
 void monitor_note_event(int radio, int tg, MonSrc src, int is_aprs, int is_sms){
+    unsigned now = now_sec();
     MON_LOCK();
     MonMark* m = mark_get_slot_unsafe(radio);
     if (m) {
+        if (m->used && m->radio == radio) {
+            bool same_tg   = (tg <= 0) || (m->tg == tg);
+            bool same_src  = (src == MON_SRC_UNKNOWN) || (m->src == src);
+            bool same_aprs = (is_aprs < 0) || (m->aprs == (is_aprs ? 1 : 0));
+            bool same_sms  = (is_sms  < 0) || (m->sms  == (is_sms  ? 1 : 0));
+            if (same_tg && same_src && same_aprs && same_sms && m->last_sec == now) {
+                MON_UNLOCK();
+                return;
+            }
+        }
+
         m->used = 1;
         m->radio = radio;
         if (tg>0) m->tg = tg;
         if (src != MON_SRC_UNKNOWN) m->src = src;
         if (is_aprs>=0) m->aprs = is_aprs ? 1:0;
         if (is_sms>=0)  m->sms  = is_sms  ? 1:0;
-        m->last_sec = now_sec();
+        m->last_sec = now;
     }
     MON_UNLOCK();
 }
@@ -4742,6 +4800,9 @@ int main(int argc, char **argv)
 	if(rc)
 		return 0;
 	else {
+		sqlite3_busy_timeout(db, 1000);
+		sqlite3_exec(db, "PRAGMA journal_mode=WAL;", 0, 0, 0);
+		sqlite3_exec(db, "PRAGMA synchronous=NORMAL;", 0, 0, 0);
 		sprintf(sql, "CREATE TABLE LOG(ID INTEGER PRIMARY KEY AUTOINCREMENT, DATE TEXT NOT NULL, RADIO INT NOT NULL, TG INT NOT NULL, TIME INT NOT NULL, SLOT INT NOT NULL, NODE INT NOT NULL, ACTIVE INT NOT NULL, CONNECT INT NOT NULL);");
 		rc = sqlite3_exec(db, sql, 0, 0, &zErrMsg);   
 		if( rc != SQLITE_OK )
@@ -4756,6 +4817,10 @@ int main(int argc, char **argv)
 		if( rc != SQLITE_OK )
 			sqlite3_free(zErrMsg);
 	}
+
+	sqlite3_busy_timeout(db, 1000);
+	sqlite3_exec(db, "PRAGMA journal_mode=WAL;", 0, 0, 0);
+	sqlite3_exec(db, "PRAGMA synchronous=NORMAL;", 0, 0, 0);
 
 	sprintf(sql, "UPDATE LOG set ACTIVE=0, CONNECT=0; SELECT * from LOG");
 	rc = sqlite3_exec(db, sql, 0, 0, &zErrMsg);
@@ -4908,6 +4973,7 @@ int main(int argc, char **argv)
 #endif
 
 #ifdef USE_SQLITE3
+	sqlite_log_shutdown();
 	sqlite3_close(db);
 #endif
 
