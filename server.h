@@ -4,7 +4,7 @@
 #define _CRT_SECURE_NO_WARNINGS
 
 #define DMR_VERSION 1
-#define DMR_RELEASE "0.1.8"
+#define DMR_RELEASE "0.1.9"
 #define OB_VERSION 0
 #define OB_RELEASE "7"
 #ifdef HAVE_APRS

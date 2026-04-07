@@ -665,14 +665,13 @@ async function renderLog() {
     if (!data.length) {
       const tr = document.createElement('tr');
       const cell = document.createElement('td');
-      cell.colSpan = 11;
+      cell.colSpan = 10;
       cell.textContent = 'No recent log entries';
       tr.append(cell);
       tbody.append(tr);
     } else {
       data.forEach((row) => {
         const tr = document.createElement('tr');
-        tr.append(td(row.id ?? '—', 'numeric'));
         tr.append(td(row.date || '—'));
         tr.append(td(formatRadio(row), 'emphasis'));
         const badgeCell = td('');

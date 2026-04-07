@@ -407,22 +407,25 @@ static void sqlite_log_replace_row(int id, const char* date_now, dword radio, dw
 	sqlite_log_reset_stmt(g_log_replace_stmt);
 }
 
-static void sqlite_log_update_row(int id, const char* date_now, int time_secs, int active, int connect)
+static void sqlite_log_update_row(int id, const char* date_now, dword radio, dword tg, int slot, dword node, int time_secs, int active, int connect)
 {
 	if (!db || id <= 0) return;
 
 	const char* q =
-		"UPDATE LOG SET DATE=?, TIME=?, ACTIVE=?, CONNECT=?, SEQ=? WHERE ID=?";
+		"UPDATE LOG SET DATE=?, RADIO=?, TG=?, TIME=?, SLOT=?, NODE=?, ACTIVE=?, CONNECT=? WHERE ID=?";
 	if (sqlite_log_prepare_stmt(&g_log_update_stmt, q) != SQLITE_OK)
 		return;
 
 	sqlite_log_reset_stmt(g_log_update_stmt);
 	sqlite3_bind_text(g_log_update_stmt, 1, date_now, -1, SQLITE_TRANSIENT);
-	sqlite3_bind_int(g_log_update_stmt, 2, time_secs);
-	sqlite3_bind_int(g_log_update_stmt, 3, active);
-	sqlite3_bind_int(g_log_update_stmt, 4, connect);
-	sqlite3_bind_int64(g_log_update_stmt, 5, sqlite_log_next_seq());
-	sqlite3_bind_int(g_log_update_stmt, 6, id);
+	sqlite3_bind_int(g_log_update_stmt, 2, (int)radio);
+	sqlite3_bind_int(g_log_update_stmt, 3, (int)tg);
+	sqlite3_bind_int(g_log_update_stmt, 4, time_secs);
+	sqlite3_bind_int(g_log_update_stmt, 5, slot);
+	sqlite3_bind_int(g_log_update_stmt, 6, (int)node);
+	sqlite3_bind_int(g_log_update_stmt, 7, active);
+	sqlite3_bind_int(g_log_update_stmt, 8, connect);
+	sqlite3_bind_int(g_log_update_stmt, 9, id);
 	sqlite3_step(g_log_update_stmt);
 	sqlite_log_reset_stmt(g_log_update_stmt);
 }
@@ -438,7 +441,7 @@ static void sqlite_log_finish_state(std::map<std::string, sqlite_log_row_state>:
 	if (it == g_log_active_rows.end())
 		return;
 
-	sqlite_log_update_row(it->second.id, date_now, time_secs, 0, connect);
+	sqlite_log_update_row(it->second.id, date_now, it->second.radio, it->second.tg, it->second.slot, it->second.node, time_secs, 0, connect);
 	g_obp_timers.erase(it->first);
 	g_log_active_rows.erase(it);
 }
@@ -543,6 +546,13 @@ static void sqlite_log_touch_active(const std::string& key, const char* date_now
 
 	int prev_time_secs = it->second.last_time_secs;
 	int prev_connect = it->second.last_connect;
+	dword prev_radio = it->second.radio;
+	dword prev_tg = it->second.tg;
+	int prev_slot = it->second.slot;
+	dword prev_node = it->second.node;
+
+	if (time_secs < prev_time_secs)
+		time_secs = prev_time_secs;
 
 	it->second.last_seen_sec = g_sec ? g_sec : (dword)time(NULL);
 	it->second.last_time_secs = time_secs;
@@ -552,10 +562,11 @@ static void sqlite_log_touch_active(const std::string& key, const char* date_now
 	it->second.slot = slot;
 	it->second.node = node;
 
-	if (prev_time_secs == time_secs && prev_connect == connect)
+	if (prev_time_secs == time_secs && prev_connect == connect &&
+		prev_radio == radio && prev_tg == tg && prev_slot == slot && prev_node == node)
 		return;
 
-	sqlite_log_update_row(it->second.id, date_now, time_secs, 1, connect);
+	sqlite_log_update_row(it->second.id, date_now, radio, tg, slot, node, time_secs, 1, connect);
 }
 
 static void sqlite_log_finish_active(const std::string& key, const char* date_now, int time_secs)
@@ -1787,7 +1798,7 @@ void handle_rx (sockaddr_in &addr, byte *pk, int pksize)
 		strftime (date_now, 100, "%d.%m.%Y / %H:%M:%S", localtime (&now));
 
 		char logkey[64];
-		sprintf(logkey, "%u:%u:%u:%u", radioid, tg, SLOT(slotid)+1, nodeid);
+		sprintf(logkey, "%u:%u", tg, SLOT(slotid)+1);
 		sqlite_log_touch_active(std::string(logkey), date_now, radioid, tg, SLOT(slotid)+1, nodeid, s->node->timer / 15, 1);
 		s->node->timer++;
 
@@ -1990,12 +2001,6 @@ void handle_rx (sockaddr_in &addr, byte *pk, int pksize)
 					}
 
 					if (bEndStream) {
-#ifdef USE_SQLITE3
-						strftime (date_now, 100, "%d.%m.%Y / %H:%M:%S", localtime (&now));
-						char logkey[64];
-						sprintf(logkey, "%u:%u:%u:%u", radioid, tg, SLOT(slotid)+1, nodeid);
-						sqlite_log_finish_active(std::string(logkey), date_now, s->node->timer / 15);
-#endif
 						s->node->timer = 0;
 					}
 
@@ -3349,6 +3354,27 @@ static void api_register(struct io* io, const char* method, const char* body) {
         return;
     }
 
+	if (exists_in_auth && exists_in_dmrids) {
+        std::string msg = std::string("{\"ok\":false,\"message\":\"DMR-ID already exists!\"}");
+        http_send_json(io, 409, "Conflict", msg);
+        return;
+    }
+
+	if(!exists_in_dmrids){
+		if (!append_dmrids_file(g_dmrids_file, (dword)dmrid, callsign.c_str(), name.c_str(), err)) {
+			std::string msg = std::string("{\"ok\":false,\"message\":\"") + json_escape(err) + "\"}";
+			http_send_json(io, 500, "Server Error", msg);
+			return;
+		}
+	}
+	if(!exists_in_auth){
+		if (!append_auth_user_file(g_auth_file, (dword)dmrid, pass.c_str(), err)) {
+			std::string msg = std::string("{\"ok\":false,\"message\":\"") + json_escape(err) + "\"}";
+			http_send_json(io, 500, "Server Error", msg);
+			return;
+		}
+	}
+
     if (!append_dmrids_file(g_dmrids_file, (dword)dmrid, callsign.c_str(), name.c_str(), err)) {
         std::string msg = std::string("{\"ok\":false,\"message\":\"") + json_escape(err) + "\"}";
         http_send_json(io, 500, "Server Error", msg);
@@ -4201,7 +4227,7 @@ static void obp_handle_rx_one(ob_peer& P) {
 			strftime(date_now, sizeof(date_now), "%d.%m.%Y / %H:%M:%S", localtime(&now));
 
 			char keybuf[64];
-			sprintf(keybuf, "%u:%u:%u:%u", radioid, tg, SLOT(slotid)+1, nodeid);
+			sprintf(keybuf, "%u:%u", tg, SLOT(slotid)+1);
 			std::string key(keybuf);
 
 			int &timer = g_obp_timers[key];
@@ -4218,7 +4244,6 @@ static void obp_handle_rx_one(ob_peer& P) {
 			obp_nodeid_old  = nodeid;
 
 			if (bEndStream) {
-				sqlite_log_finish_active(key, date_now, timer / 15);
 				timer = 0;
 			}
 #endif
@@ -4762,7 +4787,7 @@ static void uplink_handle_rx_openbridge_one(uplink_peer& P) {
         strftime(date_now, sizeof(date_now), "%d.%m.%Y / %H:%M:%S", localtime(&now));
 
         char keybuf[64];
-        sprintf(keybuf, "%u:%u:%u:%u", radioid, tg, SLOT(slotid)+1, nodeid);
+        sprintf(keybuf, "%u:%u", tg, SLOT(slotid)+1);
         std::string key(keybuf);
 
         int &timer = g_obp_timers[key];
@@ -4779,7 +4804,6 @@ static void uplink_handle_rx_openbridge_one(uplink_peer& P) {
         obp_nodeid_old  = nodeid;
 
         if (bEndStream) {
-            sqlite_log_finish_active(key, date_now, timer / 15);
             timer = 0;
         }
 #endif
