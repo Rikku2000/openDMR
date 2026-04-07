@@ -244,6 +244,7 @@ struct sqlite_log_row_state {
 	dword tg;
 	int slot;
 	dword node;
+	int src;
 };
 
 static int g_sqlite_log_max_rows = 20;
@@ -355,12 +356,12 @@ static void sqlite_log_prune_inactive_rows(int keep)
 	if (err) sqlite3_free(err);
 }
 
-static int sqlite_log_insert_row(const char* date_now, dword radio, dword tg, int slot, dword node, int time_secs, int active, int connect)
+static int sqlite_log_insert_row(const char* date_now, dword radio, dword tg, int slot, dword node, int time_secs, int active, int connect, int src)
 {
 	if (!db) return 0;
 
 	const char* q =
-		"INSERT INTO LOG (DATE,RADIO,TG,TIME,SLOT,NODE,ACTIVE,CONNECT,SEQ) VALUES (?,?,?,?,?,?,?,?,?)";
+		"INSERT INTO LOG (DATE,RADIO,TG,TIME,SLOT,NODE,ACTIVE,CONNECT,SRC,SEQ) VALUES (?,?,?,?,?,?,?,?,?,?)";
 	if (sqlite_log_prepare_stmt(&g_log_insert_stmt, q) != SQLITE_OK)
 		return 0;
 
@@ -373,7 +374,8 @@ static int sqlite_log_insert_row(const char* date_now, dword radio, dword tg, in
 	sqlite3_bind_int(g_log_insert_stmt, 6, (int)node);
 	sqlite3_bind_int(g_log_insert_stmt, 7, active);
 	sqlite3_bind_int(g_log_insert_stmt, 8, connect);
-	sqlite3_bind_int64(g_log_insert_stmt, 9, sqlite_log_next_seq());
+	sqlite3_bind_int(g_log_insert_stmt, 9, src);
+	sqlite3_bind_int64(g_log_insert_stmt, 10, sqlite_log_next_seq());
 
 	int id = 0;
 	if (sqlite3_step(g_log_insert_stmt) == SQLITE_DONE)
@@ -383,12 +385,12 @@ static int sqlite_log_insert_row(const char* date_now, dword radio, dword tg, in
 	return id;
 }
 
-static void sqlite_log_replace_row(int id, const char* date_now, dword radio, dword tg, int slot, dword node, int time_secs, int active, int connect)
+static void sqlite_log_replace_row(int id, const char* date_now, dword radio, dword tg, int slot, dword node, int time_secs, int active, int connect, int src)
 {
 	if (!db || id <= 0) return;
 
 	const char* q =
-		"UPDATE LOG SET DATE=?, RADIO=?, TG=?, TIME=?, SLOT=?, NODE=?, ACTIVE=?, CONNECT=?, SEQ=? WHERE ID=?";
+		"UPDATE LOG SET DATE=?, RADIO=?, TG=?, TIME=?, SLOT=?, NODE=?, ACTIVE=?, CONNECT=?, SRC=?, SEQ=? WHERE ID=?";
 	if (sqlite_log_prepare_stmt(&g_log_replace_stmt, q) != SQLITE_OK)
 		return;
 
@@ -401,28 +403,33 @@ static void sqlite_log_replace_row(int id, const char* date_now, dword radio, dw
 	sqlite3_bind_int(g_log_replace_stmt, 6, (int)node);
 	sqlite3_bind_int(g_log_replace_stmt, 7, active);
 	sqlite3_bind_int(g_log_replace_stmt, 8, connect);
-	sqlite3_bind_int64(g_log_replace_stmt, 9, sqlite_log_next_seq());
-	sqlite3_bind_int(g_log_replace_stmt, 10, id);
+	sqlite3_bind_int(g_log_replace_stmt, 9, src);
+	sqlite3_bind_int64(g_log_replace_stmt, 10, sqlite_log_next_seq());
+	sqlite3_bind_int(g_log_replace_stmt, 11, id);
 	sqlite3_step(g_log_replace_stmt);
 	sqlite_log_reset_stmt(g_log_replace_stmt);
 }
 
-static void sqlite_log_update_row(int id, const char* date_now, int time_secs, int active, int connect)
+static void sqlite_log_update_row(int id, const char* date_now, dword radio, dword tg, int slot, dword node, int time_secs, int active, int connect, int src)
 {
 	if (!db || id <= 0) return;
 
 	const char* q =
-		"UPDATE LOG SET DATE=?, TIME=?, ACTIVE=?, CONNECT=?, SEQ=? WHERE ID=?";
+		"UPDATE LOG SET DATE=?, RADIO=?, TG=?, TIME=?, SLOT=?, NODE=?, ACTIVE=?, CONNECT=?, SRC=? WHERE ID=?";
 	if (sqlite_log_prepare_stmt(&g_log_update_stmt, q) != SQLITE_OK)
 		return;
 
 	sqlite_log_reset_stmt(g_log_update_stmt);
 	sqlite3_bind_text(g_log_update_stmt, 1, date_now, -1, SQLITE_TRANSIENT);
-	sqlite3_bind_int(g_log_update_stmt, 2, time_secs);
-	sqlite3_bind_int(g_log_update_stmt, 3, active);
-	sqlite3_bind_int(g_log_update_stmt, 4, connect);
-	sqlite3_bind_int64(g_log_update_stmt, 5, sqlite_log_next_seq());
-	sqlite3_bind_int(g_log_update_stmt, 6, id);
+	sqlite3_bind_int(g_log_update_stmt, 2, (int)radio);
+	sqlite3_bind_int(g_log_update_stmt, 3, (int)tg);
+	sqlite3_bind_int(g_log_update_stmt, 4, time_secs);
+	sqlite3_bind_int(g_log_update_stmt, 5, slot);
+	sqlite3_bind_int(g_log_update_stmt, 6, (int)node);
+	sqlite3_bind_int(g_log_update_stmt, 7, active);
+	sqlite3_bind_int(g_log_update_stmt, 8, connect);
+	sqlite3_bind_int(g_log_update_stmt, 9, src);
+	sqlite3_bind_int(g_log_update_stmt, 10, id);
 	sqlite3_step(g_log_update_stmt);
 	sqlite_log_reset_stmt(g_log_update_stmt);
 }
@@ -438,7 +445,7 @@ static void sqlite_log_finish_state(std::map<std::string, sqlite_log_row_state>:
 	if (it == g_log_active_rows.end())
 		return;
 
-	sqlite_log_update_row(it->second.id, date_now, time_secs, 0, connect);
+	sqlite_log_update_row(it->second.id, date_now, it->second.radio, it->second.tg, it->second.slot, it->second.node, time_secs, 0, connect, it->second.src);
 	g_obp_timers.erase(it->first);
 	g_log_active_rows.erase(it);
 }
@@ -505,7 +512,7 @@ static void sqlite_log_cleanup_stale_active(bool force_all = false)
 	sqlite_log_prune_inactive_rows(g_sqlite_log_max_rows);
 }
 
-static void sqlite_log_touch_active(const std::string& key, const char* date_now, dword radio, dword tg, int slot, dword node, int time_secs, int connect)
+static void sqlite_log_touch_active(const std::string& key, const char* date_now, dword radio, dword tg, int slot, dword node, int time_secs, int connect, int src)
 {
 	sqlite_log_cleanup_stale_active();
 
@@ -514,14 +521,14 @@ static void sqlite_log_touch_active(const std::string& key, const char* date_now
 		sqlite_log_finish_conflicts(key, date_now, node, slot);
 		int id = 0;
 		if (sqlite_log_row_count() < g_sqlite_log_max_rows) {
-			id = sqlite_log_insert_row(date_now, radio, tg, slot, node, time_secs, 1, connect);
+			id = sqlite_log_insert_row(date_now, radio, tg, slot, node, time_secs, 1, connect, src);
 		} else {
 			int reuse_id = sqlite_log_oldest_inactive_id();
 			if (reuse_id > 0) {
-				sqlite_log_replace_row(reuse_id, date_now, radio, tg, slot, node, time_secs, 1, connect);
+				sqlite_log_replace_row(reuse_id, date_now, radio, tg, slot, node, time_secs, 1, connect, src);
 				id = reuse_id;
 			} else {
-				id = sqlite_log_insert_row(date_now, radio, tg, slot, node, time_secs, 1, connect);
+				id = sqlite_log_insert_row(date_now, radio, tg, slot, node, time_secs, 1, connect, src);
 			}
 		}
 
@@ -535,6 +542,7 @@ static void sqlite_log_touch_active(const std::string& key, const char* date_now
 			state.tg = tg;
 			state.slot = slot;
 			state.node = node;
+			state.src = src;
 			g_log_active_rows[key] = state;
 			sqlite_log_prune_inactive_rows(g_sqlite_log_max_rows);
 		}
@@ -543,6 +551,14 @@ static void sqlite_log_touch_active(const std::string& key, const char* date_now
 
 	int prev_time_secs = it->second.last_time_secs;
 	int prev_connect = it->second.last_connect;
+	int prev_src = it->second.src;
+	dword prev_radio = it->second.radio;
+	dword prev_tg = it->second.tg;
+	int prev_slot = it->second.slot;
+	dword prev_node = it->second.node;
+
+	if (time_secs < prev_time_secs)
+		time_secs = prev_time_secs;
 
 	it->second.last_seen_sec = g_sec ? g_sec : (dword)time(NULL);
 	it->second.last_time_secs = time_secs;
@@ -551,11 +567,14 @@ static void sqlite_log_touch_active(const std::string& key, const char* date_now
 	it->second.tg = tg;
 	it->second.slot = slot;
 	it->second.node = node;
+	it->second.src = src;
 
-	if (prev_time_secs == time_secs && prev_connect == connect)
+	if (prev_time_secs == time_secs && prev_connect == connect &&
+		prev_src == src && prev_radio == radio && prev_tg == tg &&
+		prev_slot == slot && prev_node == node)
 		return;
 
-	sqlite_log_update_row(it->second.id, date_now, time_secs, 1, connect);
+	sqlite_log_update_row(it->second.id, date_now, radio, tg, slot, node, time_secs, 1, connect, src);
 }
 
 static void sqlite_log_finish_active(const std::string& key, const char* date_now, int time_secs)
@@ -1788,7 +1807,7 @@ void handle_rx (sockaddr_in &addr, byte *pk, int pksize)
 
 		char logkey[64];
 		sprintf(logkey, "%u:%u:%u:%u", radioid, tg, SLOT(slotid)+1, nodeid);
-		sqlite_log_touch_active(std::string(logkey), date_now, radioid, tg, SLOT(slotid)+1, nodeid, s->node->timer / 15, 1);
+		sqlite_log_touch_active(std::string(logkey), date_now, radioid, tg, SLOT(slotid)+1, nodeid, s->node->timer / 15, 1, MON_SRC_LOCAL);
 		s->node->timer++;
 
 #ifdef HAVE_HTTPMODE
@@ -3405,7 +3424,7 @@ static void api_log(struct io* io, const char* path){
     else if (strstr(path, "mode=user")) mode = LOG_MODE_USER;
 
     const char* q_raw =
-        "SELECT l.ID, l.DATE, l.RADIO, l.TG, l.SLOT, l.NODE, l.TIME, l.ACTIVE, l.CONNECT, "
+        "SELECT l.ID, l.DATE, l.RADIO, l.TG, l.SLOT, l.NODE, l.TIME, l.ACTIVE, l.CONNECT, l.SRC, "
         "       CASE WHEN EXISTS (SELECT 1 FROM LOG la WHERE la.RADIO = l.RADIO AND la.ACTIVE = 1) "
         "            THEN 1 ELSE 0 END AS ONLINE "
         "FROM LOG l "
@@ -3413,28 +3432,28 @@ static void api_log(struct io* io, const char* path){
         "LIMIT ?";
 
     const char* q_tg =
-        "SELECT l.ID, l.DATE, l.RADIO, l.TG, l.SLOT, l.NODE, l.TIME, l.ACTIVE, l.CONNECT, "
+        "SELECT l.ID, l.DATE, l.RADIO, l.TG, l.SLOT, l.NODE, l.TIME, l.ACTIVE, l.CONNECT, l.SRC, "
         "       CASE WHEN EXISTS (SELECT 1 FROM LOG la WHERE la.RADIO = l.RADIO AND la.ACTIVE = 1) "
         "            THEN 1 ELSE 0 END AS ONLINE "
         "FROM LOG l "
         "JOIN ("
-        "    SELECT TG, SLOT, NODE, MAX(SEQ) AS MAX_SEQ "
+        "    SELECT SRC, TG, SLOT, NODE, MAX(SEQ) AS MAX_SEQ "
         "    FROM LOG "
-        "    GROUP BY TG, SLOT, NODE"
-        ") latest ON latest.TG = l.TG AND latest.SLOT = l.SLOT AND latest.NODE = l.NODE AND latest.MAX_SEQ = l.SEQ "
+        "    GROUP BY SRC, TG, SLOT, NODE"
+        ") latest ON latest.SRC = l.SRC AND latest.TG = l.TG AND latest.SLOT = l.SLOT AND latest.NODE = l.NODE AND latest.MAX_SEQ = l.SEQ "
         "ORDER BY l.ACTIVE DESC, l.SEQ DESC, l.ID DESC "
         "LIMIT ?";
 
     const char* q_user =
-        "SELECT l.ID, l.DATE, l.RADIO, l.TG, l.SLOT, l.NODE, l.TIME, l.ACTIVE, l.CONNECT, "
+        "SELECT l.ID, l.DATE, l.RADIO, l.TG, l.SLOT, l.NODE, l.TIME, l.ACTIVE, l.CONNECT, l.SRC, "
         "       CASE WHEN EXISTS (SELECT 1 FROM LOG la WHERE la.RADIO = l.RADIO AND la.ACTIVE = 1) "
         "            THEN 1 ELSE 0 END AS ONLINE "
         "FROM LOG l "
         "JOIN ("
-        "    SELECT RADIO, MAX(SEQ) AS MAX_SEQ "
+        "    SELECT SRC, RADIO, MAX(SEQ) AS MAX_SEQ "
         "    FROM LOG "
-        "    GROUP BY RADIO"
-        ") latest ON latest.RADIO = l.RADIO AND latest.MAX_SEQ = l.SEQ "
+        "    GROUP BY SRC, RADIO"
+        ") latest ON latest.SRC = l.SRC AND latest.RADIO = l.RADIO AND latest.MAX_SEQ = l.SEQ "
         "ORDER BY l.ACTIVE DESC, l.SEQ DESC, l.ID DESC "
         "LIMIT ?";
 
@@ -3461,9 +3480,10 @@ static void api_log(struct io* io, const char* path){
         int sec   = sqlite3_column_int(st, 6);
         int active= sqlite3_column_int(st, 7);
         int conn  = sqlite3_column_int(st, 8);
-        int online= sqlite3_column_int(st, 9);
-		int src=0, aprs=0, sms=0;
-		mark_read(radio, &src, &aprs, &sms);
+        int src   = sqlite3_column_int(st, 9);
+        int online= sqlite3_column_int(st, 10);
+		int mark_src=0, aprs=0, sms=0;
+		mark_read(radio, &mark_src, &aprs, &sms);
         std::string callsign = callsign_json_for_radio(radio);
 		std::string tg_name = talkgroup_name_for((dword)tg);
 		std::string tg_country = talkgroup_country_for((dword)tg);
@@ -3496,7 +3516,7 @@ static void api_active(struct io* io){
 
     char q[256];
     sprintf(q,
-        "SELECT DATE, RADIO, TG, SLOT, NODE, TIME "
+        "SELECT DATE, RADIO, TG, SLOT, NODE, TIME, SRC "
         "FROM LOG WHERE ACTIVE=1 "
         "ORDER BY SEQ DESC, ID DESC LIMIT %d", g_sqlite_active_api_limit);
 
@@ -3509,9 +3529,9 @@ static void api_active(struct io* io){
         const unsigned char* date=sqlite3_column_text(st,0);
         int radio=sqlite3_column_int(st,1), tg=sqlite3_column_int(st,2),
             slot=sqlite3_column_int(st,3), node=sqlite3_column_int(st,4),
-            sec=sqlite3_column_int(st,5);
-		int src=0, aprs=0, sms=0;
-		mark_read(radio, &src, &aprs, &sms);
+            sec=sqlite3_column_int(st,5), src=sqlite3_column_int(st,6);
+		int mark_src=0, aprs=0, sms=0;
+		mark_read(radio, &mark_src, &aprs, &sms);
         std::string callsign = callsign_json_for_radio(radio);
 		std::string tg_name = talkgroup_name_for((dword)tg);
 		std::string tg_country = talkgroup_country_for((dword)tg);
@@ -4258,7 +4278,7 @@ static void obp_handle_rx_one(ob_peer& P) {
 			std::string key(keybuf);
 
 			int &timer = g_obp_timers[key];
-			sqlite_log_touch_active(key, date_now, radioid, tg, SLOT(slotid)+1, nodeid, timer / 15, 1);
+			sqlite_log_touch_active(key, date_now, radioid, tg, SLOT(slotid)+1, nodeid, timer / 15, 1, MON_SRC_OBP);
 			timer++;
 
 #ifdef HAVE_HTTPMODE
@@ -4819,7 +4839,7 @@ static void uplink_handle_rx_openbridge_one(uplink_peer& P) {
         std::string key(keybuf);
 
         int &timer = g_obp_timers[key];
-        sqlite_log_touch_active(key, date_now, radioid, tg, SLOT(slotid)+1, nodeid, timer / 15, 1);
+        sqlite_log_touch_active(key, date_now, radioid, tg, SLOT(slotid)+1, nodeid, timer / 15, 1, MON_SRC_OBP);
         timer++;
 
 #ifdef HAVE_HTTPMODE
@@ -5076,7 +5096,7 @@ int main(int argc, char **argv)
 		sqlite3_exec(db, "PRAGMA synchronous=NORMAL;", 0, 0, 0);
 		sqlite3_exec(db, "PRAGMA temp_store=MEMORY;", 0, 0, 0);
 		sqlite3_exec(db, "PRAGMA wal_autocheckpoint=50;", 0, 0, 0);
-		sprintf(sql, "CREATE TABLE LOG(ID INTEGER PRIMARY KEY AUTOINCREMENT, DATE TEXT NOT NULL, RADIO INT NOT NULL, TG INT NOT NULL, TIME INT NOT NULL, SLOT INT NOT NULL, NODE INT NOT NULL, ACTIVE INT NOT NULL, CONNECT INT NOT NULL, SEQ INTEGER NOT NULL DEFAULT 0);");
+		sprintf(sql, "CREATE TABLE LOG(ID INTEGER PRIMARY KEY AUTOINCREMENT, DATE TEXT NOT NULL, RADIO INT NOT NULL, TG INT NOT NULL, TIME INT NOT NULL, SLOT INT NOT NULL, NODE INT NOT NULL, ACTIVE INT NOT NULL, CONNECT INT NOT NULL, SRC INT NOT NULL DEFAULT 0, SEQ INTEGER NOT NULL DEFAULT 0);");
 		rc = sqlite3_exec(db, sql, 0, 0, &zErrMsg);   
 		if( rc != SQLITE_OK )
 			sqlite3_free(zErrMsg);
@@ -5085,7 +5105,7 @@ int main(int argc, char **argv)
 	}
 
 	if (IsOptionPresent(argc,argv,"--create")) {
-		sprintf(sql, "CREATE TABLE LOG(ID INTEGER PRIMARY KEY AUTOINCREMENT, DATE TEXT NOT NULL, RADIO INT NOT NULL, TG INT NOT NULL, TIME INT NOT NULL, SLOT INT NOT NULL, NODE INT NOT NULL, ACTIVE INT NOT NULL, CONNECT INT NOT NULL, SEQ INTEGER NOT NULL DEFAULT 0);");
+		sprintf(sql, "CREATE TABLE LOG(ID INTEGER PRIMARY KEY AUTOINCREMENT, DATE TEXT NOT NULL, RADIO INT NOT NULL, TG INT NOT NULL, TIME INT NOT NULL, SLOT INT NOT NULL, NODE INT NOT NULL, ACTIVE INT NOT NULL, CONNECT INT NOT NULL, SRC INT NOT NULL DEFAULT 0, SEQ INTEGER NOT NULL DEFAULT 0);");
 		rc = sqlite3_exec(db, sql, 0, 0, &zErrMsg);   
 		if( rc != SQLITE_OK )
 			sqlite3_free(zErrMsg);
@@ -5096,6 +5116,7 @@ int main(int argc, char **argv)
 	sqlite3_exec(db, "PRAGMA synchronous=NORMAL;", 0, 0, 0);
 	sqlite3_exec(db, "PRAGMA temp_store=MEMORY;", 0, 0, 0);
 	sqlite3_exec(db, "PRAGMA wal_autocheckpoint=50;", 0, 0, 0);
+	sqlite3_exec(db, "ALTER TABLE LOG ADD COLUMN SRC INTEGER NOT NULL DEFAULT 0;", 0, 0, 0);
 	sqlite3_exec(db, "ALTER TABLE LOG ADD COLUMN SEQ INTEGER NOT NULL DEFAULT 0;", 0, 0, 0);
 	sqlite3_exec(db, "UPDATE LOG SET SEQ=ID WHERE SEQ=0;", 0, 0, 0);
 
@@ -5106,7 +5127,7 @@ int main(int argc, char **argv)
 	zErrMsg = 0;
 	sqlite3_exec(db, "CREATE INDEX IF NOT EXISTS idx_log_active_seq ON LOG(ACTIVE, SEQ DESC, ID DESC);", 0, 0, &zErrMsg);
 	if( zErrMsg ) { sqlite3_free(zErrMsg); zErrMsg = 0; }
-	sqlite3_exec(db, "CREATE INDEX IF NOT EXISTS idx_log_lookup ON LOG(RADIO, TG, SLOT, NODE, SEQ DESC, ID DESC);", 0, 0, &zErrMsg);
+	sqlite3_exec(db, "CREATE INDEX IF NOT EXISTS idx_log_lookup ON LOG(SRC, RADIO, TG, SLOT, NODE, SEQ DESC, ID DESC);", 0, 0, &zErrMsg);
 	if( zErrMsg ) { sqlite3_free(zErrMsg); zErrMsg = 0; }
 	sqlite3_exec(db, "CREATE INDEX IF NOT EXISTS idx_log_seq ON LOG(SEQ DESC, ID DESC);", 0, 0, &zErrMsg);
 	if( zErrMsg ) { sqlite3_free(zErrMsg); zErrMsg = 0; }
