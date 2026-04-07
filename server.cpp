@@ -239,11 +239,23 @@ struct sqlite_log_row_state {
 	int id;
 	int last_time_secs;
 	int last_connect;
+	dword last_seen_sec;
+	dword radio;
+	dword tg;
+	int slot;
+	dword node;
 };
+
+static int g_sqlite_log_max_rows = 20;
+static int g_sqlite_active_api_limit = 5;
+static int g_sqlite_active_timeout_secs = 8;
+static dword g_sqlite_last_cleanup_sec = 0;
 
 static std::map<std::string, sqlite_log_row_state> g_log_active_rows;
 static sqlite3_stmt* g_log_insert_stmt = NULL;
 static sqlite3_stmt* g_log_update_stmt = NULL;
+static sqlite3_stmt* g_log_replace_stmt = NULL;
+static long long g_log_seq = 0;
 
 static int sqlite_log_prepare_stmt(sqlite3_stmt** st, const char* q)
 {
@@ -271,18 +283,74 @@ static void sqlite_log_shutdown()
 {
 	sqlite_log_finalize_stmt(&g_log_insert_stmt);
 	sqlite_log_finalize_stmt(&g_log_update_stmt);
+	sqlite_log_finalize_stmt(&g_log_replace_stmt);
 }
 
-static void sqlite_log_prune_rows(int keep)
+static long long sqlite_log_next_seq()
+{
+	return ++g_log_seq;
+}
+
+static void sqlite_log_set_seq_seed_from_db()
+{
+	if (!db) return;
+
+	sqlite3_stmt* st = NULL;
+	if (sqlite3_prepare_v2(db, "SELECT COALESCE(MAX(SEQ), 0) FROM LOG", -1, &st, NULL) != SQLITE_OK)
+		return;
+
+	if (sqlite3_step(st) == SQLITE_ROW)
+		g_log_seq = sqlite3_column_int64(st, 0);
+
+	sqlite3_finalize(st);
+}
+
+static int sqlite_log_row_count()
+{
+	if (!db) return 0;
+
+	int count = 0;
+	sqlite3_stmt* st = NULL;
+	if (sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM LOG", -1, &st, NULL) != SQLITE_OK)
+		return 0;
+
+	if (sqlite3_step(st) == SQLITE_ROW)
+		count = sqlite3_column_int(st, 0);
+
+	sqlite3_finalize(st);
+	return count;
+}
+
+static int sqlite_log_oldest_inactive_id()
+{
+	if (!db) return 0;
+
+	int id = 0;
+	sqlite3_stmt* st = NULL;
+	if (sqlite3_prepare_v2(db, "SELECT ID FROM LOG WHERE ACTIVE=0 ORDER BY SEQ ASC, ID ASC LIMIT 1", -1, &st, NULL) != SQLITE_OK)
+		return 0;
+
+	if (sqlite3_step(st) == SQLITE_ROW)
+		id = sqlite3_column_int(st, 0);
+
+	sqlite3_finalize(st);
+	return id;
+}
+
+static void sqlite_log_prune_inactive_rows(int keep)
 {
 	if (!db || keep <= 0) return;
+
+	int count = sqlite_log_row_count();
+	int excess = count - keep;
+	if (excess <= 0) return;
 
 	char query[512];
 	char* err = 0;
 	sprintf(query,
-		"DELETE FROM LOG WHERE ID NOT IN ("
-		"SELECT ID FROM (SELECT ID FROM LOG ORDER BY ACTIVE DESC, ID DESC LIMIT %d)"
-		");", keep);
+		"DELETE FROM LOG WHERE ID IN ("
+		"SELECT ID FROM LOG WHERE ACTIVE=0 ORDER BY SEQ ASC, ID ASC LIMIT %d"
+		");", excess);
 	sqlite3_exec(db, query, 0, 0, &err);
 	if (err) sqlite3_free(err);
 }
@@ -292,7 +360,7 @@ static int sqlite_log_insert_row(const char* date_now, dword radio, dword tg, in
 	if (!db) return 0;
 
 	const char* q =
-		"INSERT INTO LOG (DATE,RADIO,TG,TIME,SLOT,NODE,ACTIVE,CONNECT) VALUES (?,?,?,?,?,?,?,?)";
+		"INSERT INTO LOG (DATE,RADIO,TG,TIME,SLOT,NODE,ACTIVE,CONNECT,SEQ) VALUES (?,?,?,?,?,?,?,?,?)";
 	if (sqlite_log_prepare_stmt(&g_log_insert_stmt, q) != SQLITE_OK)
 		return 0;
 
@@ -305,6 +373,7 @@ static int sqlite_log_insert_row(const char* date_now, dword radio, dword tg, in
 	sqlite3_bind_int(g_log_insert_stmt, 6, (int)node);
 	sqlite3_bind_int(g_log_insert_stmt, 7, active);
 	sqlite3_bind_int(g_log_insert_stmt, 8, connect);
+	sqlite3_bind_int64(g_log_insert_stmt, 9, sqlite_log_next_seq());
 
 	int id = 0;
 	if (sqlite3_step(g_log_insert_stmt) == SQLITE_DONE)
@@ -314,12 +383,36 @@ static int sqlite_log_insert_row(const char* date_now, dword radio, dword tg, in
 	return id;
 }
 
+static void sqlite_log_replace_row(int id, const char* date_now, dword radio, dword tg, int slot, dword node, int time_secs, int active, int connect)
+{
+	if (!db || id <= 0) return;
+
+	const char* q =
+		"UPDATE LOG SET DATE=?, RADIO=?, TG=?, TIME=?, SLOT=?, NODE=?, ACTIVE=?, CONNECT=?, SEQ=? WHERE ID=?";
+	if (sqlite_log_prepare_stmt(&g_log_replace_stmt, q) != SQLITE_OK)
+		return;
+
+	sqlite_log_reset_stmt(g_log_replace_stmt);
+	sqlite3_bind_text(g_log_replace_stmt, 1, date_now, -1, SQLITE_TRANSIENT);
+	sqlite3_bind_int(g_log_replace_stmt, 2, (int)radio);
+	sqlite3_bind_int(g_log_replace_stmt, 3, (int)tg);
+	sqlite3_bind_int(g_log_replace_stmt, 4, time_secs);
+	sqlite3_bind_int(g_log_replace_stmt, 5, slot);
+	sqlite3_bind_int(g_log_replace_stmt, 6, (int)node);
+	sqlite3_bind_int(g_log_replace_stmt, 7, active);
+	sqlite3_bind_int(g_log_replace_stmt, 8, connect);
+	sqlite3_bind_int64(g_log_replace_stmt, 9, sqlite_log_next_seq());
+	sqlite3_bind_int(g_log_replace_stmt, 10, id);
+	sqlite3_step(g_log_replace_stmt);
+	sqlite_log_reset_stmt(g_log_replace_stmt);
+}
+
 static void sqlite_log_update_row(int id, const char* date_now, int time_secs, int active, int connect)
 {
 	if (!db || id <= 0) return;
 
 	const char* q =
-		"UPDATE LOG SET DATE=?, TIME=?, ACTIVE=?, CONNECT=? WHERE ID=?";
+		"UPDATE LOG SET DATE=?, TIME=?, ACTIVE=?, CONNECT=?, SEQ=? WHERE ID=?";
 	if (sqlite_log_prepare_stmt(&g_log_update_stmt, q) != SQLITE_OK)
 		return;
 
@@ -328,33 +421,141 @@ static void sqlite_log_update_row(int id, const char* date_now, int time_secs, i
 	sqlite3_bind_int(g_log_update_stmt, 2, time_secs);
 	sqlite3_bind_int(g_log_update_stmt, 3, active);
 	sqlite3_bind_int(g_log_update_stmt, 4, connect);
-	sqlite3_bind_int(g_log_update_stmt, 5, id);
+	sqlite3_bind_int64(g_log_update_stmt, 5, sqlite_log_next_seq());
+	sqlite3_bind_int(g_log_update_stmt, 6, id);
 	sqlite3_step(g_log_update_stmt);
 	sqlite_log_reset_stmt(g_log_update_stmt);
 }
 
+static void sqlite_log_make_now(char* date_now, size_t date_now_sz)
+{
+	time_t now = time(0);
+	strftime(date_now, date_now_sz, "%d.%m.%Y / %H:%M:%S", localtime(&now));
+}
+
+static void sqlite_log_finish_state(std::map<std::string, sqlite_log_row_state>::iterator it, const char* date_now, int time_secs, int connect)
+{
+	if (it == g_log_active_rows.end())
+		return;
+
+	sqlite_log_update_row(it->second.id, date_now, time_secs, 0, connect);
+	g_obp_timers.erase(it->first);
+	g_log_active_rows.erase(it);
+}
+
+static void sqlite_log_finish_conflicts(const std::string& key, const char* date_now, dword node, int slot)
+{
+	std::vector<std::string> conflicts;
+	for (std::map<std::string, sqlite_log_row_state>::iterator it = g_log_active_rows.begin(); it != g_log_active_rows.end(); ++it) {
+		if (it->first == key)
+			continue;
+		if (it->second.node == node && it->second.slot == slot)
+			conflicts.push_back(it->first);
+	}
+
+	for (size_t i = 0; i < conflicts.size(); ++i) {
+		std::map<std::string, sqlite_log_row_state>::iterator it = g_log_active_rows.find(conflicts[i]);
+		if (it != g_log_active_rows.end())
+			sqlite_log_finish_state(it, date_now, it->second.last_time_secs, it->second.last_connect);
+	}
+}
+
+static void sqlite_log_forget_node(dword node)
+{
+	std::vector<std::string> doomed;
+	for (std::map<std::string, sqlite_log_row_state>::iterator it = g_log_active_rows.begin(); it != g_log_active_rows.end(); ++it) {
+		if (it->second.node == node)
+			doomed.push_back(it->first);
+	}
+
+	for (size_t i = 0; i < doomed.size(); ++i) {
+		g_obp_timers.erase(doomed[i]);
+		g_log_active_rows.erase(doomed[i]);
+	}
+}
+
+static void sqlite_log_cleanup_stale_active(bool force_all = false)
+{
+	if (!db)
+		return;
+	if (!force_all && g_sqlite_active_timeout_secs <= 0)
+		return;
+
+	dword now_sec = g_sec ? g_sec : (dword)time(NULL);
+	if (!force_all && g_sqlite_last_cleanup_sec == now_sec)
+		return;
+	g_sqlite_last_cleanup_sec = now_sec;
+
+	std::vector<std::string> expired;
+	for (std::map<std::string, sqlite_log_row_state>::iterator it = g_log_active_rows.begin(); it != g_log_active_rows.end(); ++it) {
+		if (force_all || ((int)(now_sec - it->second.last_seen_sec) >= g_sqlite_active_timeout_secs))
+			expired.push_back(it->first);
+	}
+
+	if (expired.empty())
+		return;
+
+	char date_now[100];
+	sqlite_log_make_now(date_now, sizeof(date_now));
+	for (size_t i = 0; i < expired.size(); ++i) {
+		std::map<std::string, sqlite_log_row_state>::iterator it = g_log_active_rows.find(expired[i]);
+		if (it != g_log_active_rows.end())
+			sqlite_log_finish_state(it, date_now, it->second.last_time_secs, it->second.last_connect);
+	}
+	sqlite_log_prune_inactive_rows(g_sqlite_log_max_rows);
+}
+
 static void sqlite_log_touch_active(const std::string& key, const char* date_now, dword radio, dword tg, int slot, dword node, int time_secs, int connect)
 {
+	sqlite_log_cleanup_stale_active();
+
 	std::map<std::string, sqlite_log_row_state>::iterator it = g_log_active_rows.find(key);
 	if (it == g_log_active_rows.end()) {
-		int id = sqlite_log_insert_row(date_now, radio, tg, slot, node, time_secs, 1, connect);
+		sqlite_log_finish_conflicts(key, date_now, node, slot);
+		int id = 0;
+		if (sqlite_log_row_count() < g_sqlite_log_max_rows) {
+			id = sqlite_log_insert_row(date_now, radio, tg, slot, node, time_secs, 1, connect);
+		} else {
+			int reuse_id = sqlite_log_oldest_inactive_id();
+			if (reuse_id > 0) {
+				sqlite_log_replace_row(reuse_id, date_now, radio, tg, slot, node, time_secs, 1, connect);
+				id = reuse_id;
+			} else {
+				id = sqlite_log_insert_row(date_now, radio, tg, slot, node, time_secs, 1, connect);
+			}
+		}
+
 		if (id > 0) {
 			sqlite_log_row_state state;
 			state.id = id;
 			state.last_time_secs = time_secs;
 			state.last_connect = connect;
+			state.last_seen_sec = g_sec ? g_sec : (dword)time(NULL);
+			state.radio = radio;
+			state.tg = tg;
+			state.slot = slot;
+			state.node = node;
 			g_log_active_rows[key] = state;
-			sqlite_log_prune_rows(20);
+			sqlite_log_prune_inactive_rows(g_sqlite_log_max_rows);
 		}
 		return;
 	}
 
-	if (it->second.last_time_secs == time_secs && it->second.last_connect == connect)
+	int prev_time_secs = it->second.last_time_secs;
+	int prev_connect = it->second.last_connect;
+
+	it->second.last_seen_sec = g_sec ? g_sec : (dword)time(NULL);
+	it->second.last_time_secs = time_secs;
+	it->second.last_connect = connect;
+	it->second.radio = radio;
+	it->second.tg = tg;
+	it->second.slot = slot;
+	it->second.node = node;
+
+	if (prev_time_secs == time_secs && prev_connect == connect)
 		return;
 
 	sqlite_log_update_row(it->second.id, date_now, time_secs, 1, connect);
-	it->second.last_time_secs = time_secs;
-	it->second.last_connect = connect;
 }
 
 static void sqlite_log_finish_active(const std::string& key, const char* date_now, int time_secs)
@@ -363,8 +564,9 @@ static void sqlite_log_finish_active(const std::string& key, const char* date_no
 	if (it == g_log_active_rows.end())
 		return;
 
-	sqlite_log_update_row(it->second.id, date_now, time_secs, 0, 1);
-	g_log_active_rows.erase(it);
+	it->second.last_time_secs = time_secs;
+	sqlite_log_finish_state(it, date_now, time_secs, 1);
+	sqlite_log_prune_inactive_rows(g_sqlite_log_max_rows);
 }
 
 static dword obp_radioid_old = 0;
@@ -1234,6 +1436,7 @@ void delete_node (dword nodeid)
 	rc = sqlite3_exec(db, sql, 0, 0, &zErrMsg);
 	if (rc != SQLITE_OK)
 		sqlite3_free(zErrMsg);
+	sqlite_log_forget_node(nodeid);
 #endif
 
 	if (inrange(dmrid,LOW_DMRID,HIGH_DMRID)) {
@@ -3170,7 +3373,9 @@ static void api_register(struct io* io, const char* method, const char* body) {
 static void api_log(struct io* io, const char* path){
     if (!db){ http_send(500, "DB Closed", "application/json", "[]", io); return; }
 
-    int limit = 20;
+    sqlite_log_cleanup_stale_active();
+
+    int limit = g_sqlite_log_max_rows;
     const char* k = strstr(path, "limit=");
     if (k) { int v = atoi(k+6); if (v >= 1 && v <= 500) limit = v; }
 
@@ -3179,7 +3384,7 @@ static void api_log(struct io* io, const char* path){
         "       CASE WHEN EXISTS (SELECT 1 FROM LOG la WHERE la.RADIO = l.RADIO AND la.ACTIVE = 1) "
         "            THEN 1 ELSE 0 END AS ONLINE "
         "FROM LOG l "
-        "ORDER BY l.ID DESC "
+        "ORDER BY l.SEQ DESC, l.ID DESC "
         "LIMIT ?";
 
     sqlite3_stmt* st = NULL;
@@ -3234,10 +3439,13 @@ static void api_log(struct io* io, const char* path){
 static void api_active(struct io* io){
     if (!db){ http_send(500, "DB Closed", "application/json", "[]", io); return; }
 
-    const char* q =
+    sqlite_log_cleanup_stale_active();
+
+    char q[256];
+    sprintf(q,
         "SELECT DATE, RADIO, TG, SLOT, NODE, TIME "
         "FROM LOG WHERE ACTIVE=1 "
-        "ORDER BY ID DESC LIMIT 20";
+        "ORDER BY SEQ DESC, ID DESC LIMIT %d", g_sqlite_active_api_limit);
 
     sqlite3_stmt* st=NULL; sqlite3_prepare_v2(db,q,-1,&st,NULL);
 
@@ -4620,6 +4828,13 @@ void process_config_file()
 #endif
 #ifdef USE_SQLITE3
 		strcpy (g_log, c.getstring ("File","Log",g_log).c_str());
+		g_sqlite_log_max_rows = c.getint("SQLite","MaxRows", g_sqlite_log_max_rows);
+		g_sqlite_active_api_limit = c.getint("SQLite","ActiveListLimit", g_sqlite_active_api_limit);
+		g_sqlite_active_timeout_secs = c.getint("SQLite","ActiveTimeout", g_sqlite_active_timeout_secs);
+		if (g_sqlite_log_max_rows < 1) g_sqlite_log_max_rows = 1;
+		if (g_sqlite_active_api_limit < 1) g_sqlite_active_api_limit = 1;
+		if (g_sqlite_active_api_limit > g_sqlite_log_max_rows) g_sqlite_active_api_limit = g_sqlite_log_max_rows;
+		if (g_sqlite_active_timeout_secs < 1) g_sqlite_active_timeout_secs = 1;
 #endif
 		strcpy (g_talkgroup, c.getstring ("File","Talkgroup",g_talkgroup).c_str());
 		strcpy (g_banned, c.getstring ("File","Banned",g_banned).c_str());
@@ -4671,6 +4886,9 @@ void process_config_file()
 	logmsg (LOG_YELLOW, 0, "Password      : %s\n", g_password);
 #ifdef USE_SQLITE3
 	logmsg (LOG_YELLOW, 0, "Log           : %s\n", g_log);
+	logmsg (LOG_YELLOW, 0, "SQLite rows   : %d\n", g_sqlite_log_max_rows);
+	logmsg (LOG_YELLOW, 0, "Active list   : %d\n", g_sqlite_active_api_limit);
+	logmsg (LOG_YELLOW, 0, "Active timeout: %d sec\n", g_sqlite_active_timeout_secs);
 #endif
 	logmsg (LOG_YELLOW, 0, "Talkgroup     : %s\n", g_talkgroup);
 	logmsg (LOG_YELLOW, 0, "Banned        : %s\n", g_banned);
@@ -4803,7 +5021,9 @@ int main(int argc, char **argv)
 		sqlite3_busy_timeout(db, 1000);
 		sqlite3_exec(db, "PRAGMA journal_mode=WAL;", 0, 0, 0);
 		sqlite3_exec(db, "PRAGMA synchronous=NORMAL;", 0, 0, 0);
-		sprintf(sql, "CREATE TABLE LOG(ID INTEGER PRIMARY KEY AUTOINCREMENT, DATE TEXT NOT NULL, RADIO INT NOT NULL, TG INT NOT NULL, TIME INT NOT NULL, SLOT INT NOT NULL, NODE INT NOT NULL, ACTIVE INT NOT NULL, CONNECT INT NOT NULL);");
+		sqlite3_exec(db, "PRAGMA temp_store=MEMORY;", 0, 0, 0);
+		sqlite3_exec(db, "PRAGMA wal_autocheckpoint=50;", 0, 0, 0);
+		sprintf(sql, "CREATE TABLE LOG(ID INTEGER PRIMARY KEY AUTOINCREMENT, DATE TEXT NOT NULL, RADIO INT NOT NULL, TG INT NOT NULL, TIME INT NOT NULL, SLOT INT NOT NULL, NODE INT NOT NULL, ACTIVE INT NOT NULL, CONNECT INT NOT NULL, SEQ INTEGER NOT NULL DEFAULT 0);");
 		rc = sqlite3_exec(db, sql, 0, 0, &zErrMsg);   
 		if( rc != SQLITE_OK )
 			sqlite3_free(zErrMsg);
@@ -4812,7 +5032,7 @@ int main(int argc, char **argv)
 	}
 
 	if (IsOptionPresent(argc,argv,"--create")) {
-		sprintf(sql, "CREATE TABLE LOG(ID INTEGER PRIMARY KEY AUTOINCREMENT, DATE TEXT NOT NULL, RADIO INT NOT NULL, TG INT NOT NULL, TIME INT NOT NULL, SLOT INT NOT NULL, NODE INT NOT NULL, ACTIVE INT NOT NULL, CONNECT INT NOT NULL);");
+		sprintf(sql, "CREATE TABLE LOG(ID INTEGER PRIMARY KEY AUTOINCREMENT, DATE TEXT NOT NULL, RADIO INT NOT NULL, TG INT NOT NULL, TIME INT NOT NULL, SLOT INT NOT NULL, NODE INT NOT NULL, ACTIVE INT NOT NULL, CONNECT INT NOT NULL, SEQ INTEGER NOT NULL DEFAULT 0);");
 		rc = sqlite3_exec(db, sql, 0, 0, &zErrMsg);   
 		if( rc != SQLITE_OK )
 			sqlite3_free(zErrMsg);
@@ -4821,18 +5041,25 @@ int main(int argc, char **argv)
 	sqlite3_busy_timeout(db, 1000);
 	sqlite3_exec(db, "PRAGMA journal_mode=WAL;", 0, 0, 0);
 	sqlite3_exec(db, "PRAGMA synchronous=NORMAL;", 0, 0, 0);
+	sqlite3_exec(db, "PRAGMA temp_store=MEMORY;", 0, 0, 0);
+	sqlite3_exec(db, "PRAGMA wal_autocheckpoint=50;", 0, 0, 0);
+	sqlite3_exec(db, "ALTER TABLE LOG ADD COLUMN SEQ INTEGER NOT NULL DEFAULT 0;", 0, 0, 0);
+	sqlite3_exec(db, "UPDATE LOG SET SEQ=ID WHERE SEQ=0;", 0, 0, 0);
 
 	sprintf(sql, "UPDATE LOG set ACTIVE=0, CONNECT=0; SELECT * from LOG");
 	rc = sqlite3_exec(db, sql, 0, 0, &zErrMsg);
 	if( rc != SQLITE_OK )
 		sqlite3_free(zErrMsg);
 	zErrMsg = 0;
-	sqlite3_exec(db, "CREATE INDEX IF NOT EXISTS idx_log_active_id ON LOG(ACTIVE, ID DESC);", 0, 0, &zErrMsg);
+	sqlite3_exec(db, "CREATE INDEX IF NOT EXISTS idx_log_active_seq ON LOG(ACTIVE, SEQ DESC, ID DESC);", 0, 0, &zErrMsg);
 	if( zErrMsg ) { sqlite3_free(zErrMsg); zErrMsg = 0; }
-	sqlite3_exec(db, "CREATE INDEX IF NOT EXISTS idx_log_lookup ON LOG(RADIO, TG, SLOT, NODE, ID DESC);", 0, 0, &zErrMsg);
+	sqlite3_exec(db, "CREATE INDEX IF NOT EXISTS idx_log_lookup ON LOG(RADIO, TG, SLOT, NODE, SEQ DESC, ID DESC);", 0, 0, &zErrMsg);
+	if( zErrMsg ) { sqlite3_free(zErrMsg); zErrMsg = 0; }
+	sqlite3_exec(db, "CREATE INDEX IF NOT EXISTS idx_log_seq ON LOG(SEQ DESC, ID DESC);", 0, 0, &zErrMsg);
 	if( zErrMsg ) { sqlite3_free(zErrMsg); zErrMsg = 0; }
 	g_log_active_rows.clear();
-	sqlite_log_prune_rows(20);
+	sqlite_log_set_seq_seed_from_db();
+	sqlite_log_prune_inactive_rows(g_sqlite_log_max_rows);
 #endif
 
 	if (IsOptionPresent (argc, argv, "-d"))
@@ -4942,6 +5169,9 @@ int main(int argc, char **argv)
 		aprs_housekeeping();
 #endif
 		auth_housekeeping();
+#ifdef USE_SQLITE3
+		sqlite_log_cleanup_stale_active();
+#endif
 
 		if (g_sec - g_last_housekeeping_sec >= g_housekeeping_minutes * 60) {
 			log (NULL, "Housekeeping, tick %u\n", starttick);
@@ -4973,6 +5203,7 @@ int main(int argc, char **argv)
 #endif
 
 #ifdef USE_SQLITE3
+	sqlite_log_cleanup_stale_active(true);
 	sqlite_log_shutdown();
 	sqlite3_close(db);
 #endif

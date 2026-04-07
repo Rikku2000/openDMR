@@ -659,7 +659,7 @@ async function renderLog() {
   if (!tbody) return;
 
   try {
-    const data = await fetchJSON('/api/log?limit=20');
+    const data = await fetchJSON('/api/log');
     tbody.innerHTML = '';
 
     if (!data.length) {
@@ -698,7 +698,7 @@ async function renderLog() {
     const talkCount = Math.max(data.length - openBridgeCount - aprsCount - smsCount, 0);
 
     setText('metric-talkgroups', String(uniqueTGs.length));
-    setText('metric-talkgroups-sub', uniqueTgLabels.length ? `Latest: ${uniqueTgLabels.slice(0, 3).join(', ')}` : 'Across latest 20 records');
+    setText('metric-talkgroups-sub', uniqueTgLabels.length ? `Latest: ${uniqueTgLabels.slice(0, 3).join(', ')}` : 'Across rolling 20 records');
     setText('metric-online', String(onlineCount));
     setText('metric-online-sub', data.length ? `Out of ${data.length} recent records` : 'Seen in recent activity');
     setText('log-meta', data.length ? `${data.length} rows loaded` : 'No recent activity');
