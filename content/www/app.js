@@ -659,7 +659,7 @@ async function renderLog() {
   if (!tbody) return;
 
   try {
-    const data = await fetchJSON('/api/log');
+    const data = await fetchJSON('/api/log?mode=user');
     tbody.innerHTML = '';
 
     if (!data.length) {

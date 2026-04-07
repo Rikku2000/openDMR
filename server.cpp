@@ -407,25 +407,22 @@ static void sqlite_log_replace_row(int id, const char* date_now, dword radio, dw
 	sqlite_log_reset_stmt(g_log_replace_stmt);
 }
 
-static void sqlite_log_update_row(int id, const char* date_now, dword radio, dword tg, int slot, dword node, int time_secs, int active, int connect)
+static void sqlite_log_update_row(int id, const char* date_now, int time_secs, int active, int connect)
 {
 	if (!db || id <= 0) return;
 
 	const char* q =
-		"UPDATE LOG SET DATE=?, RADIO=?, TG=?, TIME=?, SLOT=?, NODE=?, ACTIVE=?, CONNECT=? WHERE ID=?";
+		"UPDATE LOG SET DATE=?, TIME=?, ACTIVE=?, CONNECT=?, SEQ=? WHERE ID=?";
 	if (sqlite_log_prepare_stmt(&g_log_update_stmt, q) != SQLITE_OK)
 		return;
 
 	sqlite_log_reset_stmt(g_log_update_stmt);
 	sqlite3_bind_text(g_log_update_stmt, 1, date_now, -1, SQLITE_TRANSIENT);
-	sqlite3_bind_int(g_log_update_stmt, 2, (int)radio);
-	sqlite3_bind_int(g_log_update_stmt, 3, (int)tg);
-	sqlite3_bind_int(g_log_update_stmt, 4, time_secs);
-	sqlite3_bind_int(g_log_update_stmt, 5, slot);
-	sqlite3_bind_int(g_log_update_stmt, 6, (int)node);
-	sqlite3_bind_int(g_log_update_stmt, 7, active);
-	sqlite3_bind_int(g_log_update_stmt, 8, connect);
-	sqlite3_bind_int(g_log_update_stmt, 9, id);
+	sqlite3_bind_int(g_log_update_stmt, 2, time_secs);
+	sqlite3_bind_int(g_log_update_stmt, 3, active);
+	sqlite3_bind_int(g_log_update_stmt, 4, connect);
+	sqlite3_bind_int64(g_log_update_stmt, 5, sqlite_log_next_seq());
+	sqlite3_bind_int(g_log_update_stmt, 6, id);
 	sqlite3_step(g_log_update_stmt);
 	sqlite_log_reset_stmt(g_log_update_stmt);
 }
@@ -441,7 +438,7 @@ static void sqlite_log_finish_state(std::map<std::string, sqlite_log_row_state>:
 	if (it == g_log_active_rows.end())
 		return;
 
-	sqlite_log_update_row(it->second.id, date_now, it->second.radio, it->second.tg, it->second.slot, it->second.node, time_secs, 0, connect);
+	sqlite_log_update_row(it->second.id, date_now, time_secs, 0, connect);
 	g_obp_timers.erase(it->first);
 	g_log_active_rows.erase(it);
 }
@@ -546,13 +543,6 @@ static void sqlite_log_touch_active(const std::string& key, const char* date_now
 
 	int prev_time_secs = it->second.last_time_secs;
 	int prev_connect = it->second.last_connect;
-	dword prev_radio = it->second.radio;
-	dword prev_tg = it->second.tg;
-	int prev_slot = it->second.slot;
-	dword prev_node = it->second.node;
-
-	if (time_secs < prev_time_secs)
-		time_secs = prev_time_secs;
 
 	it->second.last_seen_sec = g_sec ? g_sec : (dword)time(NULL);
 	it->second.last_time_secs = time_secs;
@@ -562,11 +552,10 @@ static void sqlite_log_touch_active(const std::string& key, const char* date_now
 	it->second.slot = slot;
 	it->second.node = node;
 
-	if (prev_time_secs == time_secs && prev_connect == connect &&
-		prev_radio == radio && prev_tg == tg && prev_slot == slot && prev_node == node)
+	if (prev_time_secs == time_secs && prev_connect == connect)
 		return;
 
-	sqlite_log_update_row(it->second.id, date_now, radio, tg, slot, node, time_secs, 1, connect);
+	sqlite_log_update_row(it->second.id, date_now, time_secs, 1, connect);
 }
 
 static void sqlite_log_finish_active(const std::string& key, const char* date_now, int time_secs)
@@ -1798,7 +1787,7 @@ void handle_rx (sockaddr_in &addr, byte *pk, int pksize)
 		strftime (date_now, 100, "%d.%m.%Y / %H:%M:%S", localtime (&now));
 
 		char logkey[64];
-		sprintf(logkey, "%u:%u", tg, SLOT(slotid)+1);
+		sprintf(logkey, "%u:%u:%u:%u", radioid, tg, SLOT(slotid)+1, nodeid);
 		sqlite_log_touch_active(std::string(logkey), date_now, radioid, tg, SLOT(slotid)+1, nodeid, s->node->timer / 15, 1);
 		s->node->timer++;
 
@@ -2001,6 +1990,12 @@ void handle_rx (sockaddr_in &addr, byte *pk, int pksize)
 					}
 
 					if (bEndStream) {
+#ifdef USE_SQLITE3
+						strftime (date_now, 100, "%d.%m.%Y / %H:%M:%S", localtime (&now));
+						char logkey[64];
+						sprintf(logkey, "%u:%u:%u:%u", radioid, tg, SLOT(slotid)+1, nodeid);
+						sqlite_log_finish_active(std::string(logkey), date_now, s->node->timer / 15);
+#endif
 						s->node->timer = 0;
 					}
 
@@ -3405,13 +3400,45 @@ static void api_log(struct io* io, const char* path){
     const char* k = strstr(path, "limit=");
     if (k) { int v = atoi(k+6); if (v >= 1 && v <= 500) limit = v; }
 
-    const char* q =
+    enum { LOG_MODE_TG, LOG_MODE_USER, LOG_MODE_RAW } mode = LOG_MODE_TG;
+    if (strstr(path, "mode=raw")) mode = LOG_MODE_RAW;
+    else if (strstr(path, "mode=user")) mode = LOG_MODE_USER;
+
+    const char* q_raw =
         "SELECT l.ID, l.DATE, l.RADIO, l.TG, l.SLOT, l.NODE, l.TIME, l.ACTIVE, l.CONNECT, "
         "       CASE WHEN EXISTS (SELECT 1 FROM LOG la WHERE la.RADIO = l.RADIO AND la.ACTIVE = 1) "
         "            THEN 1 ELSE 0 END AS ONLINE "
         "FROM LOG l "
         "ORDER BY l.SEQ DESC, l.ID DESC "
         "LIMIT ?";
+
+    const char* q_tg =
+        "SELECT l.ID, l.DATE, l.RADIO, l.TG, l.SLOT, l.NODE, l.TIME, l.ACTIVE, l.CONNECT, "
+        "       CASE WHEN EXISTS (SELECT 1 FROM LOG la WHERE la.RADIO = l.RADIO AND la.ACTIVE = 1) "
+        "            THEN 1 ELSE 0 END AS ONLINE "
+        "FROM LOG l "
+        "JOIN ("
+        "    SELECT TG, SLOT, NODE, MAX(SEQ) AS MAX_SEQ "
+        "    FROM LOG "
+        "    GROUP BY TG, SLOT, NODE"
+        ") latest ON latest.TG = l.TG AND latest.SLOT = l.SLOT AND latest.NODE = l.NODE AND latest.MAX_SEQ = l.SEQ "
+        "ORDER BY l.ACTIVE DESC, l.SEQ DESC, l.ID DESC "
+        "LIMIT ?";
+
+    const char* q_user =
+        "SELECT l.ID, l.DATE, l.RADIO, l.TG, l.SLOT, l.NODE, l.TIME, l.ACTIVE, l.CONNECT, "
+        "       CASE WHEN EXISTS (SELECT 1 FROM LOG la WHERE la.RADIO = l.RADIO AND la.ACTIVE = 1) "
+        "            THEN 1 ELSE 0 END AS ONLINE "
+        "FROM LOG l "
+        "JOIN ("
+        "    SELECT RADIO, MAX(SEQ) AS MAX_SEQ "
+        "    FROM LOG "
+        "    GROUP BY RADIO"
+        ") latest ON latest.RADIO = l.RADIO AND latest.MAX_SEQ = l.SEQ "
+        "ORDER BY l.ACTIVE DESC, l.SEQ DESC, l.ID DESC "
+        "LIMIT ?";
+
+    const char* q = (mode == LOG_MODE_RAW) ? q_raw : (mode == LOG_MODE_USER ? q_user : q_tg);
 
     sqlite3_stmt* st = NULL;
     if (sqlite3_prepare_v2(db, q, -1, &st, NULL) != SQLITE_OK) {
@@ -4227,7 +4254,7 @@ static void obp_handle_rx_one(ob_peer& P) {
 			strftime(date_now, sizeof(date_now), "%d.%m.%Y / %H:%M:%S", localtime(&now));
 
 			char keybuf[64];
-			sprintf(keybuf, "%u:%u", tg, SLOT(slotid)+1);
+			sprintf(keybuf, "%u:%u:%u:%u", radioid, tg, SLOT(slotid)+1, nodeid);
 			std::string key(keybuf);
 
 			int &timer = g_obp_timers[key];
@@ -4244,6 +4271,7 @@ static void obp_handle_rx_one(ob_peer& P) {
 			obp_nodeid_old  = nodeid;
 
 			if (bEndStream) {
+				sqlite_log_finish_active(key, date_now, timer / 15);
 				timer = 0;
 			}
 #endif
@@ -4787,7 +4815,7 @@ static void uplink_handle_rx_openbridge_one(uplink_peer& P) {
         strftime(date_now, sizeof(date_now), "%d.%m.%Y / %H:%M:%S", localtime(&now));
 
         char keybuf[64];
-        sprintf(keybuf, "%u:%u", tg, SLOT(slotid)+1);
+        sprintf(keybuf, "%u:%u:%u:%u", radioid, tg, SLOT(slotid)+1, nodeid);
         std::string key(keybuf);
 
         int &timer = g_obp_timers[key];
@@ -4804,6 +4832,7 @@ static void uplink_handle_rx_openbridge_one(uplink_peer& P) {
         obp_nodeid_old  = nodeid;
 
         if (bEndStream) {
+            sqlite_log_finish_active(key, date_now, timer / 15);
             timer = 0;
         }
 #endif
