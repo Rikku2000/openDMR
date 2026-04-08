@@ -97,7 +97,200 @@ std::vector<uplink_peer> g_uplinks;
 #ifdef HAVE_APRS
 aprs_client g_aprs = {0};
 
+struct aprs_position_entry {
+    std::string key;
+    std::string callsign;
+    std::string comment;
+    char symbol_table;
+    char symbol_code;
+    double latitude;
+    double longitude;
+    dword last_sec;
+    dword dmrid;
+
+    aprs_position_entry()
+        : symbol_table('/'), symbol_code('>'), latitude(0.0), longitude(0.0), last_sec(0), dmrid(0) {
+    }
+};
+
 static std::map<dword, std::string> g_aprs_idmap;
+static std::map<std::string, aprs_position_entry> g_aprs_positions;
+static std::string g_aprs_rxbuf;
+
+static void aprs_positions_lock();
+static void aprs_positions_unlock();
+
+static std::string aprs_trim_copy(const std::string& s) {
+    size_t b = 0;
+    while (b < s.size() && (s[b] == ' ' || s[b] == '\t' || s[b] == '\r' || s[b] == '\n')) ++b;
+    size_t e = s.size();
+    while (e > b && (s[e - 1] == ' ' || s[e - 1] == '\t' || s[e - 1] == '\r' || s[e - 1] == '\n')) --e;
+    return s.substr(b, e - b);
+}
+
+static std::string aprs_normalize_callsign(const std::string& raw) {
+    std::string s = aprs_trim_copy(raw);
+    std::string out;
+    out.reserve(s.size());
+    for (size_t i = 0; i < s.size(); ++i) {
+        unsigned char ch = (unsigned char)s[i];
+        if (ch == '>') break;
+        if (ch == ' ' || ch == '\t' || ch == ',' || ch == '\r' || ch == '\n') break;
+        out.push_back((char)toupper(ch));
+    }
+    return out;
+}
+
+static std::string aprs_callsign_base(const std::string& raw) {
+    std::string s = aprs_normalize_callsign(raw);
+    size_t dash = s.find('-');
+    if (dash != std::string::npos) s.erase(dash);
+    return s;
+}
+
+static dword aprs_lookup_dmrid_for_callsign(const std::string& callsign) {
+    std::string want = aprs_normalize_callsign(callsign);
+    std::string want_base = aprs_callsign_base(callsign);
+    if (want.empty()) return 0;
+
+    for (std::map<dword, std::string>::iterator it = g_aprs_idmap.begin(); it != g_aprs_idmap.end(); ++it) {
+        std::string have = aprs_normalize_callsign(it->second);
+        if (have == want) return it->first;
+        if (!want_base.empty() && aprs_callsign_base(have) == want_base) return it->first;
+    }
+    return 0;
+}
+
+static bool aprs_parse_coord_value(const char* src, int deg_digits, char hemi_pos, char hemi_neg, double* out_value) {
+    if (!src || !out_value) return false;
+
+    int deg = 0;
+    for (int i = 0; i < deg_digits; ++i) {
+        if (!isdigit((unsigned char)src[i])) return false;
+        deg = deg * 10 + (src[i] - '0');
+    }
+
+    if (!isdigit((unsigned char)src[deg_digits + 0]) || !isdigit((unsigned char)src[deg_digits + 1]))
+        return false;
+
+    int mins = (src[deg_digits + 0] - '0') * 10 + (src[deg_digits + 1] - '0');
+    if (mins < 0 || mins >= 60) return false;
+
+    double frac = 0.0;
+    double scale = 10.0;
+    int pos = deg_digits + 2;
+    if (src[pos] == '.') {
+        ++pos;
+        while (isdigit((unsigned char)src[pos])) {
+            frac += (double)(src[pos] - '0') / scale;
+            scale *= 10.0;
+            ++pos;
+        }
+    }
+
+    char hemi = src[pos];
+    if (hemi != hemi_pos && hemi != hemi_neg) return false;
+
+    double value = (double)deg + (((double)mins) + frac) / 60.0;
+    if (hemi == hemi_neg) value = -value;
+    *out_value = value;
+    return true;
+}
+
+static bool aprs_parse_position_payload(const std::string& payload, double* out_lat, double* out_lon, char* out_symtab, char* out_symcode, std::string* out_comment) {
+    if (out_lat) *out_lat = 0.0;
+    if (out_lon) *out_lon = 0.0;
+    if (out_symtab) *out_symtab = '/';
+    if (out_symcode) *out_symcode = '>';
+    if (out_comment) out_comment->clear();
+
+    if (payload.empty()) return false;
+
+    const char* p = payload.c_str();
+    if (*p == '!' || *p == '=') {
+        ++p;
+    } else if (*p == '/' || *p == '@') {
+        if (payload.size() < 8) return false;
+        p += 8;
+    } else {
+        return false;
+    }
+
+    size_t remain = strlen(p);
+    if (remain < 19) return false;
+
+    double lat = 0.0;
+    double lon = 0.0;
+    if (!aprs_parse_coord_value(p, 2, 'N', 'S', &lat)) return false;
+    char symtab = p[8];
+    if (!aprs_parse_coord_value(p + 9, 3, 'E', 'W', &lon)) return false;
+    char symcode = p[18];
+
+    if (lat < -90.0 || lat > 90.0 || lon < -180.0 || lon > 180.0) return false;
+
+    if (out_lat) *out_lat = lat;
+    if (out_lon) *out_lon = lon;
+    if (out_symtab) *out_symtab = symtab;
+    if (out_symcode) *out_symcode = symcode;
+    if (out_comment) *out_comment = aprs_trim_copy(std::string(p + 19));
+    return true;
+}
+
+static void aprs_store_position(const std::string& callsign, double latitude, double longitude, char symtab, char symcode, const std::string& comment) {
+    std::string key = aprs_normalize_callsign(callsign);
+    if (key.empty()) return;
+
+    aprs_position_entry entry;
+    entry.key = key;
+    entry.callsign = key;
+    entry.comment = aprs_trim_copy(comment);
+    entry.symbol_table = symtab ? symtab : '/';
+    entry.symbol_code = symcode ? symcode : '>';
+    entry.latitude = latitude;
+    entry.longitude = longitude;
+    entry.last_sec = g_sec ? g_sec : (dword)time(NULL);
+    entry.dmrid = aprs_lookup_dmrid_for_callsign(key);
+
+    aprs_positions_lock();
+    g_aprs_positions[key] = entry;
+    aprs_positions_unlock();
+}
+
+static void aprs_prune_positions() {
+    const dword now = g_sec ? g_sec : (dword)time(NULL);
+    const dword max_age = 86400;
+
+    aprs_positions_lock();
+    for (std::map<std::string, aprs_position_entry>::iterator it = g_aprs_positions.begin(); it != g_aprs_positions.end(); ) {
+        if (it->second.last_sec == 0 || now < it->second.last_sec || (now - it->second.last_sec) > max_age)
+            g_aprs_positions.erase(it++);
+        else
+            ++it;
+    }
+    aprs_positions_unlock();
+}
+
+static void aprs_process_line(const std::string& raw_line) {
+    std::string line = aprs_trim_copy(raw_line);
+    if (line.empty() || line[0] == '#') return;
+
+    size_t gt = line.find('>');
+    size_t colon = line.find(':');
+    if (gt == std::string::npos || colon == std::string::npos || gt == 0 || colon <= gt) return;
+
+    std::string callsign = aprs_normalize_callsign(line.substr(0, gt));
+    std::string payload = line.substr(colon + 1);
+
+    double latitude = 0.0;
+    double longitude = 0.0;
+    char symtab = '/';
+    char symcode = '>';
+    std::string comment;
+    if (!aprs_parse_position_payload(payload, &latitude, &longitude, &symtab, &symcode, &comment))
+        return;
+
+    aprs_store_position(callsign, latitude, longitude, symtab, symcode, comment);
+}
 
 static const char* aprs_safe_callsign(dword id) {
     static char buf[40];
@@ -145,6 +338,7 @@ static bool aprs_connect() {
 
     g_aprs.sock = s;
     g_aprs.last_io_sec = g_sec;
+    g_aprs_rxbuf.clear();
 
     char line[512];
     sprintf(line, "user %s pass %s vers DMRServer 0.30 filter %s\r\n",
@@ -159,12 +353,14 @@ static void aprs_disconnect() {
         CLOSESOCKET(g_aprs.sock);
         g_aprs.sock = -1;
     }
+    g_aprs_rxbuf.clear();
 }
 
 bool aprs_init_from_config() {
     g_aprs.sock = -1;
     g_aprs.last_io_sec = g_sec;
     g_aprs.last_try_sec = 0;
+    g_aprs_rxbuf.clear();
     if (!g_aprs.enabled) return false;
     return aprs_connect();
 }
@@ -180,6 +376,8 @@ static void aprs_send_line(const char* s) {
 void aprs_housekeeping() {
     if (!g_aprs.enabled) return;
 
+    aprs_prune_positions();
+
     if (aprs_connected() && g_aprs.keepalive_secs > 0 &&
         g_sec - g_aprs.last_io_sec >= (dword)g_aprs.keepalive_secs) {
         aprs_send_line("# keepalive\r\n");
@@ -192,9 +390,25 @@ void aprs_housekeeping() {
     }
 
     if (aprs_connected() && select_rx(g_aprs.sock, 0)) {
-        char buf[512];
-        recv(g_aprs.sock, buf, sizeof(buf), 0);
+        char buf[1024];
+        int n = recv(g_aprs.sock, buf, sizeof(buf) - 1, 0);
+        if (n <= 0) {
+            aprs_disconnect();
+            return;
+        }
+        buf[n] = 0;
         g_aprs.last_io_sec = g_sec;
+        g_aprs_rxbuf.append(buf, (size_t)n);
+
+        size_t pos = std::string::npos;
+        while ((pos = g_aprs_rxbuf.find('\n')) != std::string::npos) {
+            std::string line = g_aprs_rxbuf.substr(0, pos);
+            g_aprs_rxbuf.erase(0, pos + 1);
+            aprs_process_line(line);
+        }
+
+        if (g_aprs_rxbuf.size() > 4096)
+            g_aprs_rxbuf.erase(0, g_aprs_rxbuf.size() - 2048);
     }
 }
 
@@ -657,8 +871,11 @@ struct node
 	slot			slots[2];
 	bool			bAuth;
 	dword			timer;
+	bool			has_location;
+	double			latitude;
+	double			longitude;
 
-	node() : nodeid(0), dmrid(0), salt(0), hitsec(0), bAuth(false), timer(0) {
+	node() : nodeid(0), dmrid(0), salt(0), hitsec(0), bAuth(false), timer(0), has_location(false), latitude(0.0), longitude(0.0) {
 		memset(&addr, 0, sizeof(addr));
 		slots[0].node = this;
 		slots[1].node = this;
@@ -1303,6 +1520,48 @@ static std::string kv_value(const std::string& s, const char* key) {
     k += strlen(key);
     size_t end = s.find(';', k);
     return s.substr(k, end==std::string::npos ? end : end - k);
+}
+
+static std::string kv_value_ci(const std::string& s, const char* key) {
+    if (!key || !*key) return "";
+    std::string want = key;
+    for (size_t i = 0; i < want.size(); ++i)
+        want[i] = (char)toupper((unsigned char)want[i]);
+
+    size_t start = 0;
+    while (start < s.size()) {
+        size_t end = s.find(';', start);
+        std::string token = s.substr(start, end == std::string::npos ? std::string::npos : end - start);
+        size_t eq = token.find('=');
+        if (eq != std::string::npos) {
+            std::string k = token.substr(0, eq);
+            std::string v = token.substr(eq + 1);
+            for (size_t i = 0; i < k.size(); ++i)
+                k[i] = (char)toupper((unsigned char)k[i]);
+            if (k == want) {
+                trim(v);
+                return v;
+            }
+        }
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    return "";
+}
+
+static bool parse_double_in_range(const std::string& s, double minv, double maxv, double* out) {
+    if (out) *out = 0.0;
+    std::string value = s;
+    trim(value);
+    if (value.empty()) return false;
+    char* end = NULL;
+    double v = strtod(value.c_str(), &end);
+    if (!end) return false;
+    while (*end == ' ' || *end == '	') ++end;
+    if (*end) return false;
+    if (v < minv || v > maxv) return false;
+    if (out) *out = v;
+    return true;
 }
 
 static std::string csv_join_dwords(const std::vector<dword>& vals) {
@@ -2552,6 +2811,21 @@ void handle_rx (sockaddr_in &addr, byte *pk, int pksize)
 		std::vector<dword> ts1 = csv_all_ints(kv_value(cfg, "TS1="));
 		std::vector<dword> ts2 = csv_all_ints(kv_value(cfg, "TS2="));
 
+		std::string lat_s = kv_value_ci(cfg, "LAT");
+		if (lat_s.empty()) lat_s = kv_value_ci(cfg, "LATITUDE");
+		std::string lon_s = kv_value_ci(cfg, "LON");
+		if (lon_s.empty()) lon_s = kv_value_ci(cfg, "LNG");
+		if (lon_s.empty()) lon_s = kv_value_ci(cfg, "LONG");
+		if (lon_s.empty()) lon_s = kv_value_ci(cfg, "LONGITUDE");
+		double lat_v = 0.0, lon_v = 0.0;
+		if (!lat_s.empty() && !lon_s.empty() && parse_double_in_range(lat_s, -90.0, 90.0, &lat_v) && parse_double_in_range(lon_s, -180.0, 180.0, &lon_v)) {
+			n->latitude = lat_v;
+			n->longitude = lon_v;
+			n->has_location = true;
+		} else if ((!lat_s.empty() || !lon_s.empty()) && !(parse_double_in_range(lat_s, -90.0, 90.0, &lat_v) && parse_double_in_range(lon_s, -180.0, 180.0, &lon_v))) {
+			log (&addr, "RPTC invalid location for node %d LAT=%s LON=%s\n", nodeid, lat_s.c_str(), lon_s.c_str());
+		}
+
 		static_register_slot(&n->slots[0], ts1);
 		static_register_slot(&n->slots[1], ts2);
 
@@ -3165,6 +3439,11 @@ static void mon_init_locks(void){}
 #define MON_UNLOCK() pthread_mutex_unlock(&g_mon_lock)
 #define MON_CLIENT_LOCK() pthread_mutex_lock(&g_mon_client_lock)
 #define MON_CLIENT_UNLOCK() pthread_mutex_unlock(&g_mon_client_lock)
+#endif
+
+#ifdef HAVE_APRS
+static void aprs_positions_lock() { MON_LOCK(); }
+static void aprs_positions_unlock() { MON_UNLOCK(); }
 #endif
 
 static const int MONITOR_MAX_CLIENTS = 128;
@@ -3941,6 +4220,145 @@ static void api_active(struct io* io){
     http_send(200, "OK", "application/json", out, io); free(out);
 }
 
+struct api_hotspot_snapshot {
+    dword nodeid;
+    dword dmrid;
+    bool auth;
+    dword hitsec;
+    dword current_ts1;
+    dword current_ts2;
+    bool has_location;
+    double latitude;
+    double longitude;
+    sockaddr_in addr;
+    std::vector<dword> static_tgs_ts1;
+    std::vector<dword> static_tgs_ts2;
+
+    api_hotspot_snapshot() : nodeid(0), dmrid(0), auth(false), hitsec(0), current_ts1(0), current_ts2(0), has_location(false), latitude(0.0), longitude(0.0) {
+        memset(&addr, 0, sizeof(addr));
+    }
+};
+
+static void collect_hotspot_snapshots(std::vector<api_hotspot_snapshot>& out) {
+    std::lock_guard<std::mutex> lk(g_state_lock);
+    for (int ix = 0; ix < HIGH_DMRID - LOW_DMRID; ++ix) {
+        nodevector* vec = g_node_index[ix];
+        if (!vec) continue;
+
+        for (int essid = 0; essid < 100; ++essid) {
+            node* n = vec->sub[essid];
+            if (!n) continue;
+
+            api_hotspot_snapshot snap;
+            snap.nodeid = n->nodeid;
+            snap.dmrid = n->dmrid;
+            snap.auth = n->bAuth;
+            snap.hitsec = n->hitsec;
+            snap.current_ts1 = n->slots[0].tg;
+            snap.current_ts2 = n->slots[1].tg;
+            snap.has_location = n->has_location;
+            snap.latitude = n->latitude;
+            snap.longitude = n->longitude;
+            snap.addr = n->addr;
+            snap.static_tgs_ts1 = n->static_tgs_ts1;
+            snap.static_tgs_ts2 = n->static_tgs_ts2;
+            out.push_back(snap);
+        }
+    }
+}
+
+static void api_aprs(struct io* io){
+    char* out = (char*)malloc(524288);
+    if (!out) { http_send(500, "Server Error", "application/json", "[]", io); return; }
+
+    char* p = out;
+    size_t left = 524288;
+    appendf(&p, &left, "[");
+    int first = 1;
+    dword now = g_sec ? g_sec : (dword)time(NULL);
+
+#ifdef HAVE_APRS
+    std::vector<aprs_position_entry> positions;
+    aprs_positions_lock();
+    for (std::map<std::string, aprs_position_entry>::iterator it = g_aprs_positions.begin(); it != g_aprs_positions.end(); ++it)
+        positions.push_back(it->second);
+    aprs_positions_unlock();
+
+    for (size_t i = 0; i < positions.size(); ++i) {
+        const aprs_position_entry& entry = positions[i];
+        int since = (entry.last_sec && now >= entry.last_sec) ? (int)(now - entry.last_sec) : 0;
+
+        std::string callsign = entry.callsign;
+        std::string name, err;
+        if (entry.dmrid)
+            read_profile_for_dmrid(entry.dmrid, callsign, name, err);
+
+        appendf(&p, &left,
+            "%s{\"kind\":\"station\",\"callsign\":\"%s\",\"display\":\"%s\",\"name\":\"%s\",\"comment\":\"%s\","
+            "\"symbolTable\":\"%c\",\"symbolCode\":\"%c\",\"latitude\":%.6f,\"longitude\":%.6f,\"lastSeenSec\":%d,\"dmrid\":%u}",
+            first ? "" : ",",
+            json_escape(entry.callsign).c_str(),
+            json_escape(callsign).c_str(),
+            json_escape(name).c_str(),
+            json_escape(entry.comment).c_str(),
+            entry.symbol_table ? entry.symbol_table : '/',
+            entry.symbol_code ? entry.symbol_code : '>',
+            entry.latitude,
+            entry.longitude,
+            since,
+            (unsigned)entry.dmrid);
+        first = 0;
+
+        if (left < 4096) break;
+    }
+#endif
+
+    std::vector<api_hotspot_snapshot> hotspots;
+    collect_hotspot_snapshots(hotspots);
+
+    for (size_t i = 0; i < hotspots.size(); ++i) {
+        const api_hotspot_snapshot& n = hotspots[i];
+        if (!n.has_location) continue;
+
+        std::string callsign, name, err;
+        read_profile_for_dmrid(n.dmrid, callsign, name, err);
+        std::string ip = my_inet_ntoa(n.addr.sin_addr);
+        std::string static_ts1 = csv_join_dwords(n.static_tgs_ts1);
+        std::string static_ts2 = csv_join_dwords(n.static_tgs_ts2);
+        int since = (now >= n.hitsec) ? (int)(now - n.hitsec) : 0;
+
+        appendf(&p, &left,
+            "%s{\"kind\":\"hotspot\",\"callsign\":\"%s\",\"display\":\"%s\",\"name\":\"%s\",\"latitude\":%.6f,\"longitude\":%.6f,"
+            "\"lastSeenSec\":%d,\"dmrid\":%u,\"node\":%u,\"auth\":%d,\"currentTs1\":%u,\"currentTs2\":%u,\"staticTs1\":\"%s\",\"staticTs2\":\"%s\"}",
+            first ? "" : ",",
+            json_escape(callsign).c_str(),
+            json_escape(callsign.empty() ? (name.empty() ? std::to_string((unsigned)n.dmrid) : name) : callsign).c_str(),
+            json_escape(name).c_str(),
+            n.latitude,
+            n.longitude,
+            since,
+            (unsigned)n.dmrid,
+            (unsigned)n.nodeid,
+            n.auth ? 1 : 0,
+            (unsigned)n.current_ts1,
+            (unsigned)n.current_ts2,
+            json_escape(static_ts1).c_str(),
+            json_escape(static_ts2).c_str());
+        first = 0;
+
+        if (left < 4096) {
+            appendf(&p, &left, "]");
+            http_send(200, "OK", "application/json", out, io);
+            free(out);
+            return;
+        }
+    }
+
+    appendf(&p, &left, "]");
+    http_send(200, "OK", "application/json", out, io);
+    free(out);
+}
+
 static void api_systemstg(struct io* io){
     char* out = (char*)malloc(262144);
     if (!out) { http_send(500, "Server Error", "application/json", "[]", io); return; }
@@ -3950,46 +4368,43 @@ static void api_systemstg(struct io* io){
     appendf(&p, &left, "[");
     int first = 1;
 
-    for (int ix = 0; ix < HIGH_DMRID - LOW_DMRID; ++ix) {
-        nodevector* vec = g_node_index[ix];
-        if (!vec) continue;
+    std::vector<api_hotspot_snapshot> hotspots;
+    collect_hotspot_snapshots(hotspots);
 
-        for (int essid = 0; essid < 100; ++essid) {
-            node* n = vec->sub[essid];
-            if (!n) continue;
-            if (n->static_tgs_ts1.empty() && n->static_tgs_ts2.empty()) continue;
+    for (size_t i = 0; i < hotspots.size(); ++i) {
+        const api_hotspot_snapshot& n = hotspots[i];
+        if (n.static_tgs_ts1.empty() && n.static_tgs_ts2.empty()) continue;
 
-            std::string callsign, name, err;
-            read_profile_for_dmrid(n->dmrid, callsign, name, err);
-            std::string static_ts1 = csv_join_dwords(n->static_tgs_ts1);
-            std::string static_ts2 = csv_join_dwords(n->static_tgs_ts2);
-            std::string ip = my_inet_ntoa(n->addr.sin_addr);
-            dword now = g_sec ? g_sec : (dword)time(NULL);
-            int since = (now >= n->hitsec) ? (int)(now - n->hitsec) : 0;
+        std::string callsign, name, err;
+        read_profile_for_dmrid(n.dmrid, callsign, name, err);
+        std::string static_ts1 = csv_join_dwords(n.static_tgs_ts1);
+        std::string static_ts2 = csv_join_dwords(n.static_tgs_ts2);
+        std::string ip = my_inet_ntoa(n.addr.sin_addr);
+        dword now = g_sec ? g_sec : (dword)time(NULL);
+        int since = (now >= n.hitsec) ? (int)(now - n.hitsec) : 0;
 
-            appendf(&p, &left,
-                "%s{\"node\":%u,\"dmrid\":%u,\"callsign\":\"%s\",\"name\":\"%s\",\"ip\":\"%s\",\"auth\":%d,"
-                "\"lastSeenSec\":%d,\"currentTs1\":%u,\"currentTs2\":%u,\"staticTs1\":\"%s\",\"staticTs2\":\"%s\"}",
-                first ? "" : ",",
-                (unsigned)n->nodeid,
-                (unsigned)n->dmrid,
-                json_escape(callsign).c_str(),
-                json_escape(name).c_str(),
-                json_escape(ip).c_str(),
-                n->bAuth ? 1 : 0,
-                since,
-                (unsigned)n->slots[0].tg,
-                (unsigned)n->slots[1].tg,
-                json_escape(static_ts1).c_str(),
-                json_escape(static_ts2).c_str());
-            first = 0;
+        appendf(&p, &left,
+            "%s{\"node\":%u,\"dmrid\":%u,\"callsign\":\"%s\",\"name\":\"%s\",\"ip\":\"%s\",\"auth\":%d,"
+            "\"lastSeenSec\":%d,\"currentTs1\":%u,\"currentTs2\":%u,\"staticTs1\":\"%s\",\"staticTs2\":\"%s\"}",
+            first ? "" : ",",
+            (unsigned)n.nodeid,
+            (unsigned)n.dmrid,
+            json_escape(callsign).c_str(),
+            json_escape(name).c_str(),
+            json_escape(ip).c_str(),
+            n.auth ? 1 : 0,
+            since,
+            (unsigned)n.current_ts1,
+            (unsigned)n.current_ts2,
+            json_escape(static_ts1).c_str(),
+            json_escape(static_ts2).c_str());
+        first = 0;
 
-            if (left < 2048) {
-                appendf(&p, &left, "]");
-                http_send(200, "OK", "application/json", out, io);
-                free(out);
-                return;
-            }
+        if (left < 2048) {
+            appendf(&p, &left, "]");
+            http_send(200, "OK", "application/json", out, io);
+            free(out);
+            return;
         }
     }
 
@@ -4097,6 +4512,7 @@ static void handle_client(struct io* io){
     else if (strncmp(path, "/api/register", 13)==0) { api_register(io, method, body); io_close(io); return; }
     else if (strncmp(path, "/api/config", 11)==0)   { api_config(io); io_close(io); return; }
     else if (strncmp(path, "/api/active", 11)==0)   { api_active(io); io_close(io); return; }
+    else if (strncmp(path, "/api/aprs", 9)==0)      { api_aprs(io); io_close(io); return; }
     else if (strncmp(path, "/api/openbridge", 15)==0) { api_openbridge(io); io_close(io); return; }
     else if (strncmp(path, "/api/systemstg", 13)==0) { api_systemstg(io); io_close(io); return; }
     else if (strncmp(path, "/api/stat", 9)==0)      { api_stat(io); io_close(io); return; }

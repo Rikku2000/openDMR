@@ -7,6 +7,9 @@ const page = document.body.dataset.page || 'dashboard';
 let runtimeConfig = { authEnabled: false, registrationEnabled: false, profileEnabled: false, dmrIdsFile: '', serverVersion: '' };
 let authState = { token: '', user: null };
 let authPromptedOnProfile = false;
+let aprsMap = null;
+let aprsMapLayer = null;
+let aprsMapHasFit = false;
 
 function applyTheme() {
   const theme = localStorage.getItem(THEME_KEY) || 'dark';
@@ -985,6 +988,194 @@ async function renderSystemTgs() {
   }
 }
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function formatCoordinate(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '—';
+  return num.toFixed(6);
+}
+
+function aprsDetailText(row) {
+  if (!row) return '—';
+  if (row.kind === 'station') {
+    return row.comment ? String(row.comment) : 'Live APRS station packet';
+  }
+  const parts = [];
+  if (row.staticTs1) parts.push(`TS1 ${row.staticTs1}`);
+  if (row.staticTs2) parts.push(`TS2 ${row.staticTs2}`);
+  if (!parts.length && (row.currentTs1 || row.currentTs2)) {
+    if (row.currentTs1) parts.push(`Current TS1 ${row.currentTs1}`);
+    if (row.currentTs2) parts.push(`Current TS2 ${row.currentTs2}`);
+  }
+  return parts.length ? parts.join(' · ') : 'Hotspot location';
+}
+
+function ensureAprsMap() {
+  if (page !== 'maps') return null;
+  const mapEl = document.getElementById('aprs-map');
+  if (!mapEl || typeof window.L === 'undefined') return null;
+  if (aprsMap) {
+    setTimeout(() => aprsMap.invalidateSize(), 0);
+    return aprsMap;
+  }
+
+  aprsMap = window.L.map(mapEl, { preferCanvas: true }).setView([20, 0], 2);
+  window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    center: [51.1657, 10.4515],
+    zoom: 6,
+    minZoom: 3,
+    maxZoom: 12,
+    maxBoundsViscosity: 1.0,
+    worldCopyJump: false,
+    attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(aprsMap);
+  aprsMapLayer = window.L.layerGroup().addTo(aprsMap);
+  setTimeout(() => aprsMap.invalidateSize(), 0);
+  return aprsMap;
+}
+
+function aprsPopupHtml(row) {
+  const title = escapeHtml(row.display || row.callsign || row.name || row.dmrid || 'Unknown');
+  const type = row.kind === 'hotspot' ? 'Hotspot' : 'APRS station';
+  const lines = [
+    `<div class="map-popup-title">${title}</div>`,
+    `<div class="map-popup-meta"><strong>Type:</strong> ${escapeHtml(type)}</div>`
+  ];
+
+  if (row.callsign) lines.push(`<div class="map-popup-meta"><strong>Callsign:</strong> ${escapeHtml(row.callsign)}</div>`);
+  if (row.dmrid) lines.push(`<div class="map-popup-meta"><strong>DMR ID:</strong> ${escapeHtml(row.dmrid)}</div>`);
+  if (row.node) lines.push(`<div class="map-popup-meta"><strong>Node:</strong> ${escapeHtml(row.node)}</div>`);
+  lines.push(`<div class="map-popup-meta"><strong>Lat/Lon:</strong> ${escapeHtml(formatCoordinate(row.latitude))}, ${escapeHtml(formatCoordinate(row.longitude))}</div>`);
+  lines.push(`<div class="map-popup-meta"><strong>Last seen:</strong> ${escapeHtml(formatSince(row.lastSeenSec))}</div>`);
+
+  return lines.join('');
+}
+
+async function renderAprsMap() {
+  const tbody = document.querySelector('#tab-aprs tbody');
+  const map = ensureAprsMap();
+  const hasTable = !!tbody;
+  const hasMap = !!map;
+  if (!hasTable && !hasMap) return;
+
+  try {
+    const data = await fetchJSON('/api/aprs');
+    const rows = Array.isArray(data) ? data : [];
+    const stations = rows.filter((row) => row.kind === 'station');
+    const hotspots = rows.filter((row) => row.kind === 'hotspot');
+    const latest = [...rows].sort((a, b) => (a.lastSeenSec ?? 999999) - (b.lastSeenSec ?? 999999))[0] || null;
+
+    if (hasMap && aprsMapLayer) {
+      aprsMapLayer.clearLayers();
+      const bounds = [];
+
+      rows.forEach((row) => {
+        const lat = Number(row.latitude);
+        const lon = Number(row.longitude);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+
+        const options = row.kind === 'hotspot'
+          ? { radius: 8, color: '#27d08a', fillColor: '#27d08a', fillOpacity: 0.85, weight: 2 }
+          : { radius: 7, color: '#59c3ff', fillColor: '#59c3ff', fillOpacity: 0.85, weight: 2 };
+
+        const marker = window.L.circleMarker([lat, lon], options);
+        marker.bindPopup(aprsPopupHtml(row));
+        marker.addTo(aprsMapLayer);
+        bounds.push([lat, lon]);
+      });
+
+      if (!aprsMapHasFit) {
+        if (bounds.length > 1) {
+          aprsMap.fitBounds(bounds, { padding: [32, 32] });
+          aprsMapHasFit = true;
+        } else if (bounds.length === 1) {
+          aprsMap.setView(bounds[0], 10);
+          aprsMapHasFit = true;
+        }
+      }
+
+      aprsMap.invalidateSize();
+    }
+
+    if (hasTable) {
+      tbody.innerHTML = '';
+      if (!rows.length) {
+        const tr = document.createElement('tr');
+        const cell = document.createElement('td');
+        cell.colSpan = 7;
+        cell.textContent = 'No APRS station packets or hotspot locations available yet';
+        tr.append(cell);
+        tbody.append(tr);
+      } else {
+        rows.forEach((row) => {
+          const tr = document.createElement('tr');
+          tr.append(td(row.kind === 'hotspot' ? 'Hotspot' : 'APRS', row.kind === 'hotspot' ? 'ok' : ''));
+          tr.append(td(row.display || row.callsign || row.name || row.dmrid || '—', 'emphasis'));
+          tr.append(td(row.dmrid || '—', 'numeric'));
+          tr.append(td(row.node || '—', 'numeric'));
+          tr.append(td(formatCoordinate(row.latitude), 'coord'));
+          tr.append(td(formatCoordinate(row.longitude), 'coord'));
+          tr.append(td(formatSince(row.lastSeenSec), 'numeric'));
+          tbody.append(tr);
+        });
+      }
+    }
+
+    const latestName = latest ? (latest.display || latest.callsign || latest.name || latest.dmrid || '—') : '—';
+    setText('aprs-status', rows.length ? 'Map live' : 'Idle');
+    setChipTone('aprs-status', rows.length ? '' : 'soft');
+    setText('aprs-summary', rows.length
+      ? `${stations.length} APRS station${stations.length === 1 ? '' : 's'} · ${hotspots.length} hotspot${hotspots.length === 1 ? '' : 's'}`
+      : 'No APRS stations or hotspot locations yet');
+    setText('aprs-updated', `Updated ${new Date().toLocaleTimeString()}`);
+    setText('aprs-meta', rows.length ? `${rows.length} marker${rows.length === 1 ? '' : 's'} on map` : 'Map idle');
+    setText('aprs-table-meta', rows.length ? `${rows.length} position row${rows.length === 1 ? '' : 's'} loaded` : 'No positions loaded');
+    setText('aprs-metric-stations', String(stations.length));
+    setText('aprs-metric-stations-sub', stations.length
+      ? stations.map((row) => row.display || row.callsign || row.dmrid).slice(0, 4).join(', ')
+      : 'No APRS positions parsed yet');
+    setText('aprs-metric-hotspots', String(hotspots.length));
+    setText('aprs-metric-hotspots-sub', hotspots.length
+      ? hotspots.map((row) => row.display || row.callsign || row.dmrid).slice(0, 4).join(', ')
+      : 'No hotspot LAT/LON received yet');
+    setText('aprs-metric-total', String(rows.length));
+    setText('aprs-metric-total-sub', rows.length ? 'Stations plus hotspot markers' : 'Waiting for positions');
+    setText('aprs-metric-latest', latestName);
+  } catch (error) {
+    console.error('aprs:', error);
+    if (hasTable) {
+      tbody.innerHTML = '';
+      const tr = document.createElement('tr');
+      const cell = document.createElement('td');
+      cell.colSpan = 8;
+      cell.textContent = 'Unable to load APRS map data';
+      tr.append(cell);
+      tbody.append(tr);
+    }
+    setText('aprs-status', 'Unavailable');
+    setChipTone('aprs-status', 'bad');
+    setText('aprs-summary', 'Check that /api/aprs is available and APRS is enabled');
+    setText('aprs-updated', 'Request failed');
+    setText('aprs-meta', 'Request failed');
+    setText('aprs-table-meta', 'Request failed');
+    setText('aprs-metric-stations', '0');
+    setText('aprs-metric-stations-sub', 'Request failed');
+    setText('aprs-metric-hotspots', '0');
+    setText('aprs-metric-hotspots-sub', 'Request failed');
+    setText('aprs-metric-total', '0');
+    setText('aprs-metric-total-sub', 'Request failed');
+    setText('aprs-metric-latest', '—');
+  }
+}
+
 function renderProfileView() {
   if (page !== 'profile') return;
 
@@ -1085,6 +1276,7 @@ async function tick() {
   if (page === 'monitor') jobs.push(renderStat());
   if (page === 'openbridge') jobs.push(renderOpenBridge());
   if (page === 'systemstg') jobs.push(renderSystemTgs());
+  if (page === 'maps') jobs.push(renderAprsMap());
   if (page === 'register') jobs.push(renderActive(), renderLog(), renderStat());
 
   await Promise.allSettled(jobs);

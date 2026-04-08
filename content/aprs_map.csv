@@ -1,1 +1,4 @@
-<SRC_CALL>APDMR,TCPIP*:!DDMM.mmN/DDDMM.mmE>openDMR GPS
+# DMR-ID,CALLSIGN-SSID
+# Used for APRS heard and APRS station matching.
+# Example:
+# 2621234,YO1ABC-9

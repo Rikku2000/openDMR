@@ -6,7 +6,7 @@
     <title>openDMR</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
-  <body data-page="openbridge">
+  <body data-page="systemstg">
     <div class="app-shell">
       <header class="topbar">
         <div class="brand-wrap">
@@ -22,8 +22,8 @@
         <nav class="top-actions" aria-label="Primary navigation">
           <button onclick="location.href='index.html';" class="nav-btn" type="button">Dashboard</button>
           <button onclick="location.href='monitor.html';" class="nav-btn" type="button">Monitor</button>
-          <button onclick="location.href='openbridge.html';" class="nav-btn is-current" type="button">OpenBridge</button>
-          <button onclick="location.href='hotspot.html';" class="nav-btn" type="button">Hotspot</button>
+          <button onclick="location.href='openbridge.html';" class="nav-btn" type="button">OpenBridge</button>
+          <button onclick="location.href='hotspot.html';" class="nav-btn is-current" type="button">Hotspot</button>
           <button onclick="location.href='map.html';" class="nav-btn" type="button">Map</button>
           <button onclick="location.href='dvmanager.html';" class="nav-btn" type="button">DV Manager</button>
           <button onclick="location.href='register.html';" class="nav-btn is-hidden" data-auth-only type="button">Register</button>
@@ -38,8 +38,8 @@
               
             </p>
             <div class="hero-chips">
-              <span class="chip" id="ob-hero-status">Loading peers</span>
-              <span class="chip chip-soft" id="ob-hero-summary">Waiting for /api/openbridge</span>
+              <span class="chip" id="systemstg-status">Waiting for live data</span>
+              <span class="chip chip-soft" id="systemstg-summary">No static talkgroups received yet</span>
               <span class="chip chip-soft" id="monitor-updated">Waiting for data</span>
             </div>
           </div>
@@ -53,60 +53,61 @@
             <div class="pulse-card">
               <div class="pulse-dot"></div>
               <div>
-                <div class="pulse-title">Bridge status</div>
-                <div class="pulse-sub">Auto refresh every 3 seconds</div>
+                <div class="pulse-title">Auto refresh</div>
+                <div class="pulse-sub">Every 3 seconds</div>
               </div>
             </div>
           </div>
         </section>
 
-        <section class="metric-grid" aria-label="OpenBridge metrics">
+        <section class="metric-grid" aria-label="System talkgroup metrics">
           <article class="metric-card accent">
-            <div class="metric-label">Configured peers</div>
-            <div class="metric-value" id="ob-metric-total">0</div>
-            <div class="metric-sub" id="ob-metric-total-sub">No OpenBridge peers loaded</div>
+            <div class="metric-label">Hotspots</div>
+            <div class="metric-value" id="systemstg-metric-hotspots">0</div>
+            <div class="metric-sub" id="systemstg-metric-hotspots-sub">Waiting for MMDVM config frames</div>
           </article>
 
           <article class="metric-card">
-            <div class="metric-label">Active peers</div>
-            <div class="metric-value" id="ob-metric-active">0</div>
-            <div class="metric-sub" id="ob-metric-active-sub">No recent RX/TX</div>
+            <div class="metric-label">Unique static TGs</div>
+            <div class="metric-value" id="systemstg-metric-unique">0</div>
+            <div class="metric-sub" id="systemstg-metric-unique-sub">No static talkgroups active</div>
           </article>
 
           <article class="metric-card">
-            <div class="metric-label">Last RX</div>
-            <div class="metric-value metric-value-small" id="ob-metric-rx">—</div>
-            <div class="metric-sub" id="ob-metric-rx-sub">Waiting for traffic</div>
+            <div class="metric-label">TS1 assignments</div>
+            <div class="metric-value" id="systemstg-metric-ts1">0</div>
+            <div class="metric-sub" id="systemstg-metric-ts1-sub">No TS1 assignments</div>
           </article>
 
           <article class="metric-card">
-            <div class="metric-label">Last TX</div>
-            <div class="metric-value metric-value-small" id="ob-metric-tx">—</div>
-            <div class="metric-sub" id="ob-metric-tx-sub">Waiting for traffic</div>
+            <div class="metric-label">TS2 assignments</div>
+            <div class="metric-value" id="systemstg-metric-ts2">0</div>
+            <div class="metric-sub" id="systemstg-metric-ts2-sub">No TS2 assignments</div>
           </article>
         </section>
 
         <section class="panel-card wide-card">
           <div class="panel-head">
             <div>
-              <div class="panel-title">OpenBridge peers</div>
-              <div class="panel-subtitle">Each peer shows the remote server and current bridge state</div>
+              <div class="panel-title">Hotspot static talkgroups</div>
+              <div class="panel-subtitle"></div>
             </div>
-            <div class="panel-meta" id="ob-table-meta">Awaiting bridge sync</div>
+            <div class="panel-meta" id="systemstg-meta">No hotspot data yet</div>
           </div>
 
           <div class="table-wrap">
-            <table class="table" id="tab-openbridge" aria-label="OpenBridge peers">
+            <table class="table" id="tab-systemstg" aria-label="Hotspot static talkgroups table">
               <thead>
                 <tr>
-                  <th>Bridge</th>
-                  <th>Status</th>
-                  <th>Remote server</th>
-                  <th>Network ID</th>
-                  <th>Enhanced</th>
-                  <th>Talkgroups</th>
-                  <th>Last RX</th>
-                  <th>Last TX</th>
+                  <th>DMR ID</th>
+                  <th>Callsign</th>
+                  <th>Node ID</th>
+                  <th>Auth</th>
+                  <th>Current TS1</th>
+                  <th>Current TS2</th>
+                  <th>Static TS1</th>
+                  <th>Static TS2</th>
+                  <th>Last seen</th>
                 </tr>
               </thead>
               <tbody></tbody>

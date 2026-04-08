@@ -5,8 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>openDMR</title>
     <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
   </head>
-  <body data-page="monitor">
+  <body data-page="maps">
     <div class="app-shell">
       <header class="topbar">
         <div class="brand-wrap">
@@ -21,10 +22,10 @@
 
         <nav class="top-actions" aria-label="Primary navigation">
           <button onclick="location.href='index.html';" class="nav-btn" type="button">Dashboard</button>
-          <button onclick="location.href='monitor.html';" class="nav-btn is-current" type="button">Monitor</button>
+          <button onclick="location.href='monitor.html';" class="nav-btn" type="button">Monitor</button>
           <button onclick="location.href='openbridge.html';" class="nav-btn" type="button">OpenBridge</button>
           <button onclick="location.href='hotspot.html';" class="nav-btn" type="button">Hotspot</button>
-          <button onclick="location.href='map.html';" class="nav-btn" type="button">Map</button>
+          <button onclick="location.href='map.html';" class="nav-btn is-current" type="button">Map</button>
           <button onclick="location.href='dvmanager.html';" class="nav-btn" type="button">DV Manager</button>
           <button onclick="location.href='register.html';" class="nav-btn is-hidden" data-auth-only type="button">Register</button>
         </nav>
@@ -34,12 +35,13 @@
         <section class="hero-card">
           <div>
             <h1>Modern network overview for active calls, talkgroups, and system health.</h1>
-            <p class="hero-copy"></p>
+            <p class="hero-copy">
+              
+            </p>
             <div class="hero-chips">
-              <span class="chip" id="hero-status">Waiting for live data</span>
-              <span class="chip chip-soft" id="hero-summary">No active transmissions yet</span>
-              <span class="chip" id="monitor-status">Connecting</span>
-              <span class="chip chip-soft" id="monitor-updated">Waiting for data</span>
+              <span class="chip" id="aprs-status">Waiting for map data</span>
+              <span class="chip chip-soft" id="aprs-summary">No APRS stations or hotspot locations yet</span>
+              <span class="chip chip-soft" id="aprs-updated">Waiting for data</span>
             </div>
           </div>
 
@@ -59,63 +61,74 @@
           </div>
         </section>
 
-        <section class="metric-grid" aria-label="Monitor metrics">
+        <section class="metric-grid" aria-label="APRS and map metrics">
           <article class="metric-card accent">
-            <div class="metric-label">Node vectors</div>
-            <div class="metric-value" id="monitor-metric-vectors">0</div>
-            <div class="metric-sub" id="monitor-metric-vectors-sub">No radio vectors loaded</div>
+            <div class="metric-label">APRS stations</div>
+            <div class="metric-value" id="aprs-metric-stations">0</div>
+            <div class="metric-sub" id="aprs-metric-stations-sub">No APRS positions parsed yet</div>
           </article>
 
           <article class="metric-card">
-            <div class="metric-label">Connected nodes</div>
-            <div class="metric-value" id="monitor-metric-nodes">0</div>
-            <div class="metric-sub" id="monitor-metric-nodes-sub">Waiting for /STAT</div>
+            <div class="metric-label">Hotspots with GPS</div>
+            <div class="metric-value" id="aprs-metric-hotspots">0</div>
+            <div class="metric-sub" id="aprs-metric-hotspots-sub">No hotspot LAT/LON received yet</div>
           </article>
 
           <article class="metric-card">
-            <div class="metric-label">Active talkgroups</div>
-            <div class="metric-value" id="monitor-metric-tgs">0</div>
-            <div class="metric-sub" id="monitor-metric-tgs-sub">No slot subscriptions yet</div>
+            <div class="metric-label">Markers</div>
+            <div class="metric-value" id="aprs-metric-total">0</div>
+            <div class="metric-sub" id="aprs-metric-total-sub">Waiting for positions</div>
           </article>
 
           <article class="metric-card">
-            <div class="metric-label">Server tick</div>
-            <div class="metric-value metric-value-small" id="monitor-metric-tick">—</div>
-            <div class="metric-sub" id="monitor-metric-tick-sub">Waiting for counters</div>
+            <div class="metric-label">Latest seen</div>
+            <div class="metric-value metric-value-small" id="aprs-metric-latest">—</div>
+            <div class="metric-sub" id="aprs-metric-latest-sub"></div>
           </article>
+        </section>
+
+        <section class="panel-card wide-card map-shell">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">APRS Stations</div>
+              <div class="panel-subtitle"></div>
+            </div>
+            <div class="panel-meta" id="aprs-meta">Map idle</div>
+          </div>
+
+          <div class="map-legend" aria-label="Map legend">
+            <span class="legend-chip"><span class="legend-dot station"></span> Station</span>
+            <span class="legend-chip"><span class="legend-dot hotspot"></span> Hotspot</span>
+          </div>
+
+          <div id="aprs-map" class="map-canvas" aria-label="APRS map"></div>
         </section>
 
         <section class="panel-card wide-card">
           <div class="panel-head">
             <div>
-              <div class="panel-title">Server Monitor</div>
-              <div class="panel-subtitle"></div>
+              <div class="panel-title">Position table</div>
+              <div class="panel-subtitle">Latest merged positions from APRS-IS and hotspot config frames</div>
             </div>
-            <div class="panel-meta" id="stat-meta">No reply yet</div>
+            <div class="panel-meta" id="aprs-table-meta">No positions loaded</div>
           </div>
 
           <div class="table-wrap">
-            <table class="table" id="tab-monitor" aria-label="Server monitor table">
+            <table class="table" id="tab-aprs" aria-label="APRS and hotspot position table">
               <thead>
                 <tr>
-                  <th>Node vector</th>
-                  <th>Radio slot</th>
-                  <th>Node ID</th>
+                  <th>Type</th>
+                  <th>Display</th>
                   <th>DMR ID</th>
-                  <th>Auth</th>
-                  <th>Seen sec</th>
-                  <th>Slot 1 TG</th>
-                  <th>Slot 2 TG</th>
+                  <th>Node</th>
+                  <th>Latitude</th>
+                  <th>Longitude</th>
+                  <th>Last seen</th>
                 </tr>
               </thead>
               <tbody></tbody>
             </table>
           </div>
-
-          <details class="monitor-raw">
-            <summary>Raw /STAT output</summary>
-            <pre id="stat" class="terminal terminal-short">Waiting for /STAT reply…</pre>
-          </details>
         </section>
       </main>
 
@@ -124,6 +137,7 @@
       </footer>
     </div>
 
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
     <script type="module" src="app.js"></script>
   </body>
 </html>
