@@ -1,6 +1,6 @@
 # openDMR
 
-openDMR is a cross-platform C++ Digital Mobile Radio (DMR) network server/master that links repeaters, routes talkgroups, authenticates nodes, and can optionally provide APRS forwarding, DMR-SMS handling, SQLite logging, OpenBridge peering, a newer optional unified uplink subsystem, and an embedded multi-page web UI.
+openDMR is a cross-platform C++ Digital Mobile Radio (DMR) network server/master that links repeaters, routes talkgroups, authenticates nodes, and can optionally provide APRS forwarding, DMR-SMS handling, SQLite logging, parallel DMRD receive workers, OpenBridge peering, a newer optional unified uplink subsystem, and an embedded multi-page web UI.
 
 This README reflects the current codebase, including the newer HTTP/session APIs in `server.cpp` / `server.h` and the newer browser assets in `content/www`.
 
@@ -12,8 +12,9 @@ This README reflects the current codebase, including the newer HTTP/session APIs
 - Parrot / echo talkgroup support (`9990` by default)
 - Optional APRS forwarding (`900999` by default)
 - Optional DMR-SMS buffering and UDP emission to external tools
-- Optional SQLite activity logging for active calls, recent history, and online state
-- Embedded HTTP monitor with static asset serving and JSON endpoints
+- Optional SQLite activity logging for active calls, recent history, online state, and grouped monitor queries
+- Optional parallel DMRD receive workers via `WorkerThreads` (1..32), with stream/node sharding to preserve packet affinity
+- Embedded HTTP monitor with static asset serving and JSON/text endpoints
 - Web registration, login, logout, session refresh, and profile editing
 - OpenBridge peer support with filtering, alias names, hostname re-resolution, and optional enhanced/HMAC framing
 - Optional unified uplink support (`USE_UPLINK`) for `Uplink1..8` plus `OpenBridge1..3` sections
@@ -58,6 +59,7 @@ This README reflects the current codebase, including the newer HTTP/session APIs
 - Scanner TG fan-out (`777` by default)
 - Private-call routing when the destination radio is known
 - Global unsubscribe control TG (`4000`)
+- Optional parallel receive workers for `DMRD` traffic, sharded by stream ID (or node ID fallback) when `WorkerThreads > 1`
 
 ### Authentication
 
@@ -81,15 +83,16 @@ This README reflects the current codebase, including the newer HTTP/session APIs
 
 ### Logging (optional)
 
-- SQLite `LOG` table support
+- SQLite `LOG` table support with `SRC` and `SEQ` columns in current builds
 - Recent activity / active call / online-state views for the dashboard
+- `/api/log` grouping modes for recent activity by talkgroup, by user, or raw rows
 - Callsign enrichment from the DMR ID data file for UI output
 
 ### Embedded web monitor
 
 - Static file serving from the configured document root
-- In-process HTTP listener with client limits and socket timeouts
-- JSON APIs for config, login, profile, logs, active traffic, OpenBridge status, and raw `/STAT`
+- In-process HTTP listener with explicit client limits and socket timeouts
+- JSON/text APIs for config, login, profile, logs, active traffic, static TS1/TS2 visibility, OpenBridge status, and raw `/STAT`
 - Session-token authentication for protected actions
 
 ### Browser UI in `content/www`
@@ -195,6 +198,7 @@ openDMR uses an INI-style `dmr.conf`.
 - `Port` — main DMR UDP port
 - `Password` — shared network password
 - `Housekeeping` — housekeeping interval in minutes
+- `WorkerThreads` — number of parallel DMRD receive workers; `1` keeps inline handling and values are clamped to `1..32`
 
 ### `[Homebrew]`
 
@@ -227,6 +231,14 @@ openDMR uses an INI-style `dmr.conf`.
 - `Enable` — enable login/registration/profile flows
 - `Reload` — auth CSV reload interval
 - `UnknownPolicy` — unknown-node policy
+
+### `[SQLite]`
+
+Available when compiled with `USE_SQLITE3`:
+
+- `MaxRows` — maximum retained rows in the rolling `LOG` table window
+- `ActiveListLimit` — maximum rows returned by `GET /api/active`
+- `ActiveTimeout` — stale-active timeout in seconds before the server closes lingering active rows
 
 ### `[OpenBridge1]` … `[OpenBridge3]`
 
@@ -325,12 +337,19 @@ Reload=60
 UnknownPolicy=0
 ```
 
+If those keys are omitted, the current code defaults are `WorkerThreads=1`, `[SQLite] MaxRows=20`, `[SQLite] ActiveListLimit=5`, and `[SQLite] ActiveTimeout=8`.
+
 ## Defaults and constants
 
 Important built-in values from the current code:
 
 - `DEFAULT_PORT = 62031`
 - `DEFAULT_HOUSEKEEPING_MINUTES = 1`
+- default worker threads = `1`
+- maximum worker threads = `32`
+- default SQLite max rows = `20`
+- default SQLite active list limit = `5`
+- default SQLite active timeout = `8` seconds
 - `LOW_DMRID = 1000000`
 - `HIGH_DMRID = 8000000`
 - `UNSUBSCRIBE_ALL_TG = 4000`
@@ -338,9 +357,9 @@ Important built-in values from the current code:
 - parrot TG = `9990`
 - APRS TG = `900999`
 - web session TTL = `86400` seconds
-- max HTTP clients = `128`
-- HTTP listen backlog = `256`
-- client timeout = `15000 ms`
+- `MONITOR_MAX_CLIENTS = 128`
+- `MONITOR_LISTEN_BACKLOG = 256`
+- `MONITOR_CLIENT_TIMEOUT_MS = 15000`
 - default OpenBridge local/remote port = `62000`
 
 ## DMR protocol handled by the server
@@ -401,12 +420,15 @@ The parrot talkgroup records frames into an in-memory buffer and replays them ba
 
 ## Threading and timing
 
-The server is mostly event-driven around the main UDP loop, with lightweight helper threads for:
+The server is mostly event-driven around the main UDP loop, with lightweight helper threads for timing, parrot playback, and per-client HTTP handling. When `[Server] WorkerThreads > 1`, the runtime also starts a fixed RX worker pool for `DMRD` traffic.
+
+Key runtime pieces are:
 
 - system timing (`g_tick` / `g_sec` maintenance)
-- parrot playback
+- RX worker pool (`start_rx_workers`) for `DMRD` traffic, sharded by stream ID or node ID fallback so related packets stay on the same worker
+- parrot playback after end-of-stream
 - monitor client handling in HTTP mode
-- optional APRS/SMS housekeeping behavior
+- APRS reconnect/keepalive, SMS housekeeping, auth reload checks, and stale SQLite active-row cleanup in the main runtime loop
 
 ## `server.h` monitor API
 
@@ -463,7 +485,7 @@ The `/api/openbridge` endpoint returns peer records with fields such as:
 
 ## Web UI and HTTP API
 
-When built with `HAVE_HTTPMODE` and enabled in config, the server serves static files from the configured `Root` and exposes JSON/text endpoints.
+When built with `HAVE_HTTPMODE` and enabled in config, the server serves static files from the configured `Root` and exposes JSON/text endpoints. The embedded listener enforces explicit client caps and per-client read/write timeouts.
 
 ### Included pages
 
@@ -524,7 +546,11 @@ Adds a new auth entry and profile entry, backed by the configured auth CSV and D
 
 #### `GET /api/active`
 
-Returns active-call style data from SQLite when logging is enabled.
+Returns active transmissions from SQLite when logging is enabled, limited by `[SQLite] ActiveListLimit`. Rows include callsign and talkgroup metadata plus `src`, APRS, and SMS markers.
+
+#### `GET /api/systemstg`
+
+Lists authenticated nodes that currently have static `TS1` / `TS2` subscriptions, including node ID, DMR-ID, callsign/name, last-seen age, current slot talkgroups, and configured static CSVs.
 
 #### `GET /api/openbridge`
 
@@ -534,9 +560,9 @@ Returns current OpenBridge peer status as JSON.
 
 Fetches the raw local `/STAT` text output and exposes it via HTTP.
 
-#### `GET /api/log?limit=N`
+#### `GET /api/log?limit=N&mode=tg|user|raw`
 
-Returns recent per-radio log rows from SQLite, enriched with callsign and source markers.
+Returns recent log rows from SQLite, enriched with callsign, talkgroup metadata, and source markers. `mode=tg` groups by source/TG/slot/node, `mode=user` groups by source/radio, and `mode=raw` returns the latest raw rows. `limit` accepts `1..500`.
 
 ### Authentication header
 
@@ -568,6 +594,7 @@ The newer shared web assets include:
 
 - `app.js` — shared auth, polling, rendering, theme persistence, and local storage helpers
 - `styles.css` — common dashboard/theme/card/table styling
+- the Login/Profile flow keeps browser state in `localStorage` and sends `X-Auth-Token` unless a header is already supplied
 
 The packaged pages use these shared assets for a consistent multi-page UI, and the dashboard-style pages poll the main monitor endpoints roughly every 3 seconds.
 
@@ -582,8 +609,10 @@ From the packaged runtime directory:
 Useful flags:
 
 ```text
--d   enable verbose/debug packet logging
--s   query a running local instance via UDP /STAT
+-d         enable verbose/debug packet logging
+-s         query a running local instance via UDP /STAT
+--create   create the `LOG` table when built with `USE_SQLITE3`
+--help     exits immediately (no usage text is printed)
 ```
 
 Useful local URLs:
@@ -603,9 +632,11 @@ Raw UDP status request:
 echo "/STAT" | nc -u 127.0.0.1 62031
 ```
 
+On startup the server loads `talkgroup.dat` and `banned.dat`, normalizes the SQLite schema when logging is enabled, resets stale `ACTIVE` / `CONNECT` flags, opens the main UDP and uplink/OpenBridge sockets, and starts the RX worker pool when `WorkerThreads` is greater than `1`.
+
 ## Logging details
 
-With SQLite enabled, the server writes a `LOG` table with fields used by the dashboard and APIs, including timestamps, radio ID, TG, slot, node, duration, connection state, and whether a radio is currently active/online.
+With SQLite enabled, the server writes a `LOG` table with columns `DATE`, `RADIO`, `TG`, `TIME`, `SLOT`, `NODE`, `ACTIVE`, `CONNECT`, `SRC`, and `SEQ`. On startup, current builds backfill missing `SRC` / `SEQ` columns when needed, seed `SEQ` from existing row IDs, reset stale `ACTIVE` / `CONNECT` flags, and create helper indexes for active and grouped monitor queries.
 
 The monitor layer also tags recent activity with source metadata so the UI can distinguish local traffic, OpenBridge traffic, APRS-related events, and SMS-related events.
 
@@ -626,6 +657,14 @@ Build with `HAVE_HTTPMODE`, enable `[Monitor]`, and make sure the configured `Ro
 ### How do registration and profile storage work?
 
 Registration writes to both the auth CSV and the configured `DMRIds.dat`-style file. Login returns a session token. Profile reads/updates are then performed against the authenticated DMR-ID.
+
+### What changes when I build with `USE_UPLINK`?
+
+The server switches from the classic OpenBridge-only loader to the unified uplink engine. That adds `[Uplink1..8]` support, Homebrew upstream login/auth/ping handling, upstream static `TS1` / `TS2` pushes, and still keeps `[OpenBridge1..3]` available for OpenBridge-class links.
+
+### How does Parrot work?
+
+On start, the server records frames into an in-memory `memfile`. After end-of-stream it spawns a playback thread and echoes the captured frames back with timed pacing.
 
 ### Does DV Manager depend on the local server database?
 

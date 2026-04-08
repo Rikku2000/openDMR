@@ -4,7 +4,7 @@
 #define _CRT_SECURE_NO_WARNINGS
 
 #define DMR_VERSION 1
-#define DMR_RELEASE "0.2.1"
+#define DMR_RELEASE "0.2.2"
 #define OB_VERSION 0
 #define OB_RELEASE "7"
 #ifdef HAVE_APRS
@@ -46,6 +46,12 @@
 #include <vector>
 #include <array>
 #include <map>
+#include <deque>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <atomic>
+#include <algorithm>
 #include <cstdint>
 #include <cstdint>
 

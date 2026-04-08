@@ -273,12 +273,12 @@
 <li>SHA-256 challenge/response auth with CSV-backed per-node passwords and configurable unknown-ID policy</li>
 <li>Optional APRS heard reporting with DMR-ID to callsign lookup and reconnect/keepalive handling</li>
 <li>Optional DMR-SMS buffering with TG allow-lists, private-call policy, frame/time limits, and UDP emission to external tools</li>
-</ul>
+<li>Optional parallel DMRD receive workers via <code>WorkerThreads</code> (1..32), with stream/node sharding to preserve packet affinity</li></ul>
 </div>
 <div class="col-6">
 <ul>
 <li>Optional SQLite3 activity database with recent log, active-call, and online status views</li>
-<li>Embedded HTTP monitor with static file serving plus JSON/text endpoints for config, auth, log, active calls, OpenBridge status, and raw <code>/STAT</code></li>
+<li>Embedded HTTP monitor with static file serving plus JSON/text endpoints for config, auth, log, active calls, OpenBridge status, and raw <code>/STAT</code></li><li>Additional monitor JSON for static TS1/TS2 visibility via <code>/api/systemstg</code>, alongside richer log grouping modes for recent activity</li>
 <li>Self-service web registration, login, logout, and profile updates backed by <code>auth_users.csv</code> and the configured <code>DMRIds.dat</code> file</li>
 <li>Modern bundled web UI: Dashboard, Monitor, OpenBridge, DV Manager, Register, and Profile</li>
 <li>Classic multi-peer OpenBridge mode with up to 3 peers, TG filters, DNS refresh, HBLink framing, optional enhanced HMAC, and relaxed checks</li>
@@ -360,7 +360,7 @@ content\server.exe</code></pre>
 <tr><td>Port</td><td>Main UDP server port</td><td><code>62031</code></td></tr>
 <tr><td>Password</td><td>Fallback/global Homebrew password</td><td><code>passw0rd</code></td></tr>
 <tr><td>Housekeeping</td><td>Housekeeping interval in minutes</td><td><code>1</code></td></tr>
-</table>
+<tr><td>WorkerThreads</td><td>Number of parallel DMRD receive workers; <code>1</code> keeps inline handling, values are clamped to <code>1..32</code></td><td><code>1</code></td></tr></table>
 <h3>[Homebrew]</h3>
 <table>
 <tr><th>Key</th><th>Description</th><th>Default</th></tr>
@@ -384,6 +384,14 @@ content\server.exe</code></pre>
 <tr><td>Talkgroup</td><td>Talkgroup preload file</td><td><code>talkgroup.dat</code></td></tr>
 <tr><td>Banned</td><td>Blocked radio ID list</td><td><code>banned.dat</code></td></tr>
 </table>
+<h3>[SQLite]</h3>
+<table>
+<tr><th>Key</th><th>Description</th><th>Default</th></tr>
+<tr><td>MaxRows</td><td>Maximum number of rows retained in <code>LOG</code>; inactive rows are reused/pruned first</td><td><code>20</code></td></tr>
+<tr><td>ActiveListLimit</td><td>Maximum rows returned by <code>/api/active</code></td><td><code>5</code></td></tr>
+<tr><td>ActiveTimeout</td><td>Seconds before stale active rows are auto-closed</td><td><code>8</code></td></tr>
+</table>
+
 </div>
 <div class="col-6">
 <h3>[DMR]</h3>
@@ -546,9 +554,10 @@ content\server.exe</code></pre>
 <h2>Threading &amp; Timing</h2>
 <ul>
 <li><strong>Time thread</strong> (<code>time_thread_proc</code>): increments <code>g_tick</code> every 50ms and <code>g_sec</code> each second.</li>
-<li><strong>Parrot playback</strong> (<code>parrot_playback_thread_proc</code>): replays buffered frames (~20ms pacing).</li>
-<li><strong>Main loop</strong>: UDP <code>select()</code> on server socket, dispatches to <code>handle_rx()</code>.</li>
-<li><strong>APRS/SMS housekeeping</strong> (optional): keepalives, reconnects, and buffer emission.</li>
+<li><strong>RX worker pool</strong> (<code>start_rx_workers</code>, optional): when <code>[Server] WorkerThreads &gt; 1</code>, 55-byte <code>DMRD</code> frames are sharded by stream ID (or node ID fallback) onto a fixed worker queue so related traffic stays on the same worker.</li>
+<li><strong>Main loop</strong>: <code>select()</code> watches the primary UDP socket plus configured uplink/OpenBridge sockets; non-worker traffic is processed inline under the shared state lock.</li>
+<li><strong>Parrot playback</strong> (<code>parrot_playback_thread_proc</code>): replays buffered frames at roughly 20ms pacing after the end of a Parrot stream.</li>
+<li><strong>Housekeeping</strong>: APRS reconnect/keepalive, SMS buffer expiry/emission, auth reload checks, and stale SQLite active-row cleanup run in the main runtime loop.</li>
 </ul>
 </section>
 <section class="card" id="datastructs">
@@ -728,13 +737,13 @@ ResolveInterval=600</code></pre>
 <h3>HTTP API</h3>
 <table>
 <tr><th>Endpoint</th><th>Method</th><th>Description</th></tr>
-<tr><td><code>/api/config</code></td><td>GET</td><td>Returns auth/profile flags, configured <code>dmrIdsFile</code>, and a build/version string assembled from core/APRS/SMS/OpenBridge version macros</td></tr>
+<tr><td><code>/api/config</code></td><td>GET</td><td>Returns <code>authEnabled</code>, <code>registrationEnabled</code>, <code>profileEnabled</code>, the configured <code>dmrIdsFile</code>, and a <code>serverVersion</code> string assembled from core/APRS/SMS/OpenBridge version macros</td></tr>
 <tr><td><code>/api/login</code></td><td>POST</td><td>Accepts form fields <code>dmrid</code> and <code>password</code>; returns a session token plus DMR-ID, callsign, and name</td></tr>
 <tr><td><code>/api/logout</code></td><td>POST</td><td>Invalidates the current session token</td></tr>
 <tr><td><code>/api/profile</code></td><td>GET / POST</td><td>GET returns the current profile for the authenticated token; POST updates <code>name</code> and/or password using <code>currentPassword</code> and <code>newPassword</code></td></tr>
 <tr><td><code>/api/register</code></td><td>POST</td><td>Creates a new auth + DMRIds entry from <code>dmrid</code>, <code>callsign</code>, <code>name</code>, and <code>password</code> when auth is enabled</td></tr>
-<tr><td><code>/api/active</code></td><td>GET</td><td>Current active transmission derived from SQLite state; returns a DB error if SQLite support is not available/open</td></tr>
-<tr><td><code>/api/log?limit=20</code></td><td>GET</td><td>Recent per-radio activity from the log database; <code>limit</code> accepts 1..500</td></tr>
+<tr><td><code>/api/active</code></td><td>GET</td><td>Current active transmissions derived from SQLite state, limited by <code>[SQLite] ActiveListLimit</code>; rows include callsign/TG metadata plus <code>src</code>, APRS, and SMS markers</td></tr><tr><td><code>/api/systemstg</code></td><td>GET</td><td>Lists authenticated nodes that currently have static TS1/TS2 subscriptions, including node ID, DMR-ID, callsign/name, last-seen age, current slot TGs, and configured static CSVs</td></tr>
+<tr><td><code>/api/log?limit=20</code></td><td>GET</td><td>Recent activity from the log database; <code>limit</code> accepts <code>1..500</code> and <code>mode=tg</code> (default), <code>mode=user</code>, or <code>mode=raw</code> control grouping. Responses include callsign, TG name/country, <code>src</code>, APRS/SMS flags, and online state</td></tr>
 <tr><td><code>/api/openbridge</code></td><td>GET</td><td>OpenBridge-class peer health, alias, remote target, resolved IP, timing data, filtering, and status; in <code>USE_UPLINK</code> builds this includes only peers whose protocol is <code>openbridge</code></td></tr>
 <tr><td><code>/api/stat</code></td><td>GET</td><td>Proxies the local <code>/STAT</code> UDP output for browser display</td></tr>
 </table>
@@ -763,11 +772,11 @@ http://127.0.0.1:8080/openbridge.html
 http://127.0.0.1:8080/dvmanager.html
 http://127.0.0.1:8080/register.html
 http://127.0.0.1:8080/profile.html</code></pre>
-<p>On startup the server loads <code>talkgroup.dat</code> and <code>banned.dat</code>, resets existing SQLite <code>ACTIVE</code>/<code>CONNECT</code> flags when logging is enabled, and then opens the main UDP socket plus any configured uplink/OpenBridge sockets. The bundled front-end polls the main JSON endpoints roughly every 3 seconds and persists theme/login state in <code>localStorage</code>.</p>
+<p>On startup the server loads <code>talkgroup.dat</code> and <code>banned.dat</code>, normalizes the SQLite schema when logging is enabled (including <code>SRC</code>/<code>SEQ</code> migration, index creation, and resetting stale <code>ACTIVE</code>/<code>CONNECT</code> flags), then opens the main UDP socket plus any configured uplink/OpenBridge sockets. When <code>WorkerThreads</code> is greater than <code>1</code>, the receive worker pool is started before entering the main event loop. The bundled front-end polls the main JSON endpoints roughly every 3 seconds and persists theme/login state in <code>localStorage</code>.</p>
 </section>
 <section class="card" id="logging">
 <h2>Logging</h2>
-<p>Console logs use colored levels via <code>logmsg(level, timed, ...)</code> (Linux ANSI / Windows Console API). SQLite logging writes to a <code>LOG</code> table with columns <em>DATE, RADIO, TG, TIME, SLOT, NODE, ACTIVE, CONNECT</em>. The embedded monitor enriches those rows with callsign lookups from <code>DMRIds.dat</code> and with recent-source markers (local vs. OpenBridge, APRS, SMS) so the dashboard can render richer status badges.</p>
+<p>Console logs use colored levels via <code>logmsg(level, timed, ...)</code> (Linux ANSI / Windows Console API). SQLite logging writes to a <code>LOG</code> table with columns <em>DATE, RADIO, TG, TIME, SLOT, NODE, ACTIVE, CONNECT, SRC, SEQ</em>. On startup, current builds backfill missing <code>SRC</code>/<code>SEQ</code> columns when needed, seed <code>SEQ</code> from existing row IDs, reset stale <code>ACTIVE</code>/<code>CONNECT</code> flags, and create helper indexes for active and grouped monitor queries. The embedded monitor further enriches rows with callsign lookups from <code>DMRIds.dat</code> plus recent-source markers (local vs. OpenBridge, APRS, SMS) so the dashboard can render richer status badges.</p>
 </section>
 <section class="card" id="faq">
 <h2>FAQ</h2>

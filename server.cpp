@@ -20,11 +20,46 @@ dword volatile g_sec;
 int g_scanner_tg = 777;
 int g_parrot_tg = 9990;
 int g_aprs_tg = 900999;
+int g_worker_threads = 1;
 
 dword radioid_old;
 dword tg_old;
 dword slotid_old;
 dword nodeid_old;
+
+static std::mutex g_state_lock;
+static std::mutex g_sqlite_lock;
+#ifdef USE_UPLINK
+static std::mutex g_uplink_lock;
+#else
+static std::mutex g_obp_lock;
+#endif
+
+struct packet_send_target {
+	sockaddr_in addr;
+	bool slot2;
+	packet_send_target() : slot2(false) {
+		memset(&addr, 0, sizeof(addr));
+	}
+};
+
+struct rx_job {
+	sockaddr_in addr;
+	std::vector<byte> data;
+};
+
+struct rx_worker_ctx {
+	std::mutex m;
+	std::condition_variable cv;
+	std::deque<rx_job> q;
+	std::thread th;
+	bool stop;
+	rx_worker_ctx() : stop(false) {}
+};
+
+static std::vector<rx_worker_ctx*> g_rx_workers;
+
+void handle_rx (sockaddr_in &addr, byte *pk, int pksize);
 
 #ifdef HAVE_HTTPMODE
 int g_monitor_enabled = 1;
@@ -1724,6 +1759,378 @@ PTHREAD_PROC(parrot_playback_thread_proc)
 	return 0;
 }
 
+
+static void add_send_target(std::vector<packet_send_target>& dests, const sockaddr_in& addr, dword slotid)
+{
+	packet_send_target t;
+	t.addr = addr;
+	t.slot2 = !!SLOT(slotid);
+	dests.push_back(t);
+}
+
+static void fanout_packet(const byte* pk, int pksize, const std::vector<packet_send_target>& dests)
+{
+	for (size_t i = 0; i < dests.size(); ++i) {
+		std::vector<byte> out(pk, pk + pksize);
+		if (dests[i].slot2)
+			out[15] |= 0x80;
+		else
+			out[15] &= 0x7F;
+		sendpacket(dests[i].addr, out.data(), pksize);
+	}
+}
+
+static void handle_rx_dmrd_parallel(sockaddr_in addr, const byte* pk_in, int pksize)
+{
+    char date_now[100];
+    time_t now = time(0);
+
+	if (!(pksize == 55 && memcmp(pk_in, "DMRD", 4) == 0)) {
+		std::lock_guard<std::mutex> lk(g_state_lock);
+		byte temp[1000];
+		memcpy(temp, pk_in, pksize);
+		handle_rx(addr, temp, pksize);
+		return;
+	}
+
+	byte pk[1000];
+	memcpy(pk, pk_in, pksize);
+
+	if (check_banned(pk) == 1)
+		return;
+
+	dword const radioid = get3(pk + 5);
+	dword const tg = get3(pk + 8);
+	dword const nodeid = get4(pk + 11);
+	dword const streamid = get4(pk + 16);
+	int const flags = pk[15];
+	bool const bStartStream = (flags & 0x23) == 0x21;
+	bool const bEndStream = (flags & 0x23) == 0x22;
+	bool const bPrivateCall = (flags & 0x40) == 0x40;
+	dword const slotid = SLOTID(nodeid, flags & 0x80);
+
+#ifdef HAVE_APRS
+	if (tg == g_aprs_tg && bStartStream)
+		aprs_send_heard(radioid, tg, nodeid);
+#endif
+
+#ifdef HAVE_HTTPMODE
+	int is_aprs_flag = (tg == g_aprs_tg) ? 1 : 0;
+#endif
+
+	if (g_debug)
+		logmsg(LOG_CYAN, 0, "node %d slot %d radio %d group %d stream %08X flags %02X\n\n", nodeid, SLOT(slotid) + 1, radioid, tg, streamid, flags);
+
+	std::vector<packet_send_target> dests;
+	parrot_exec* parrot_job = NULL;
+	bool do_uplink_forward = false;
+#ifdef USE_SQLITE3
+	bool do_sqlite_touch = false;
+	bool do_sqlite_finish = false;
+	int sqlite_touch_secs = 0;
+	int sqlite_finish_secs = 0;
+	char logkey[64] = {0};
+#endif
+
+	{
+		std::lock_guard<std::mutex> lk(g_state_lock);
+		slot* s = findslot(slotid, true);
+		if (!s) {
+			log(&addr, "Slotid %s not found\n", slotid_str(slotid).c_str());
+			return;
+		}
+
+#ifdef HAVE_SMS
+		if (g_sms.enabled) {
+			bool candidate = (bPrivateCall && g_sms.allow_private) || (!bPrivateCall && sms_tg_permitted(tg));
+			if (candidate) {
+				const byte* block51 = pk + 4;
+				if (bStartStream) {
+					sms_reset(s->sms);
+					s->sms.streamid = streamid;
+					s->sms.start_sec = g_sec;
+				}
+				if (s->sms.streamid == streamid &&
+					s->sms.frames < g_sms.max_frames &&
+					(int)(g_sec - s->sms.start_sec) <= g_sms.max_seconds) {
+					sms_append(s->sms, block51);
+				}
+				if (bEndStream && s->sms.streamid == streamid) {
+					sms_emit_udp(radioid, tg, bPrivateCall ? true : false, s->sms);
+#ifdef HAVE_HTTPMODE
+					monitor_note_event((int)radioid, (int)tg, MON_SRC_LOCAL, is_aprs_flag, 1);
+#endif
+				}
+			} else {
+				if (bEndStream && s->sms.streamid == streamid)
+					sms_reset(s->sms);
+			}
+		}
+#endif
+
+		if (!s->node->bAuth) {
+			log(&addr, "Node %d not authenticated\n", nodeid);
+			return;
+		}
+
+		if (getinaddr(s->node->addr) != getinaddr(addr)) {
+			log(&addr, "Node %d invalid IP. Should be %s\n", nodeid, my_inet_ntoa(addr.sin_addr).c_str());
+			return;
+		}
+
+#ifdef USE_SQLITE3
+		snprintf(logkey, sizeof(logkey), "%u:%u:%u:%u", radioid, tg, SLOT(slotid) + 1, nodeid);
+		sqlite_touch_secs = s->node->timer / 15;
+		do_sqlite_touch = true;
+		s->node->timer++;
+		radioid_old = radioid;
+		tg_old = tg;
+		slotid_old = slotid;
+		nodeid_old = nodeid;
+#endif
+
+		s->node->addr = addr;
+		s->node->hitsec = g_sec;
+
+		if (inrange(radioid, LOW_DMRID, HIGH_DMRID) && g_node_index[radioid - LOW_DMRID])
+			g_node_index[radioid - LOW_DMRID]->radioslot = slotid;
+
+		if (tg == UNSUBSCRIBE_ALL_TG) {
+			if (bStartStream) {
+				log(&addr, "Unsubscribe all, slotid %s\n", slotid_str(slotid).c_str());
+				unsubscribe_from_group(s);
+			}
+			return;
+		}
+
+		if (bPrivateCall) {
+			if (tg == g_parrot_tg) {
+				if (bEndStream) {
+					log(&addr, "Parrot stream end on nodeid %u slotid %s radioid %u\n", nodeid, slotid_str(slotid).c_str(), g_parrot_tg);
+					if (s->parrot) {
+						s->parrot->Write(pk, pksize);
+						parrot_job = new parrot_exec;
+						parrot_job->addr = s->node->addr;
+						parrot_job->file = s->parrot;
+						s->parrot = NULL;
+					}
+				} else {
+					if (bStartStream) {
+						log(&addr, "Parrot stream start on nodeid %u slotid %s radioid %u\n", nodeid, slotid_str(slotid).c_str(), g_parrot_tg);
+						unsubscribe_from_group(s);
+						if (!s->parrot) {
+							s->parrot = new memfile;
+							s->parrotseq++;
+							s->parrotstart = g_sec;
+						}
+					}
+					if (s->parrot && g_sec - s->parrotstart < 6)
+						s->parrot->Write(pk, pksize);
+				}
+			} else {
+				unsubscribe_from_group(s);
+				if (bStartStream)
+					log(&addr, "Private stream start, from radioid %u to radioid %u\n", radioid, tg);
+				else if (bEndStream)
+					log(&addr, "Private stream end, from radioid %u to radioid %u\n", radioid, tg);
+
+				if (inrange(tg, LOW_DMRID, HIGH_DMRID)) {
+					if (g_node_index[tg - LOW_DMRID]) {
+						dword destslotid = g_node_index[tg - LOW_DMRID]->radioslot;
+						slot const* dest = findslot(destslotid, false);
+						if (dest && dest->node) {
+							if (bStartStream || bEndStream)
+								log(&addr, "Private stream dest slotid %s found, from radioid %u to radioid %u\n", slotid_str(destslotid).c_str(), radioid, tg);
+							add_send_target(dests, dest->node->addr, destslotid);
+						} else if (bStartStream || bEndStream) {
+							log(&addr, "Private stream dest slotid %s not found, from radioid %u to radioid %u\n", slotid_str(destslotid).c_str(), radioid, tg);
+						}
+					} else if (bStartStream || bEndStream) {
+						log(&addr, "Private stream dest radioid not in node index, from radioid %u to radioid %u\n", radioid, tg);
+					}
+				} else if (bStartStream || bEndStream) {
+					log(&addr, "Private stream dest radioid out of range, from radioid %u to radioid %u\n", radioid, tg);
+				}
+			}
+		} else {
+			talkgroup* g = findgroup(tg, false);
+			if (g) {
+				if (s->tg != tg)
+					subscribe_to_group(s, g);
+
+				if (tg != g_scanner_tg) {
+					if (g->ownerslot && g_tick - g->tick >= 1500) {
+						log(&addr, "Timeout group %u, slotid %s", tg, slotid_str(g->ownerslot).c_str());
+						g->ownerslot = 0;
+					}
+
+					if (bStartStream && !g->ownerslot) {
+						log(&addr, "Take group %u, nodeid %u slotid %s radioid %u", tg, nodeid, slotid_str(slotid).c_str(), radioid);
+						g->ownerslot = slotid;
+						g->tick = g_tick;
+					}
+
+					bool forward_group_frame = (g->ownerslot == slotid);
+					if (forward_group_frame) {
+						g->tick = g_tick;
+						for (slot const* dest = g->subscribers; dest; dest = dest->next) {
+							if (dest->slotid != slotid && dest->node)
+								add_send_target(dests, dest->node->addr, dest->slotid);
+						}
+						std::map<dword, std::vector<slot*> >::iterator sit = g_static_subscribers.find(tg);
+						if (sit != g_static_subscribers.end()) {
+							std::vector<slot*>& static_slots = (*sit).second;
+							for (size_t i = 0; i < static_slots.size(); ++i) {
+								slot* sdest = static_slots[i];
+								if (!sdest) continue;
+								if (sdest->slotid == slotid) continue;
+								if (sdest->tg == tg) continue;
+								if (!sdest->node || !sdest->node->bAuth || !getinaddr(sdest->node->addr)) continue;
+								add_send_target(dests, sdest->node->addr, sdest->slotid);
+							}
+						}
+						do_uplink_forward = true;
+					}
+
+					if (bEndStream && forward_group_frame) {
+						log(&addr, "Drop group %u, nodeid %u slotid %s radioid %u", tg, nodeid, slotid_str(slotid).c_str(), radioid);
+						g->ownerslot = 0;
+					}
+
+					if (g_scanner->ownerslot && g_tick - g_scanner->tick >= 1500) {
+						log(&addr, "Timeout scanner, nodeid %u slotid %s radioid %u", nodeid, slotid_str(slotid).c_str(), radioid);
+						g_scanner->ownerslot = 0;
+					}
+
+#ifdef USE_SQLITE3
+					if (bEndStream) {
+						sqlite_finish_secs = s->node->timer / 15;
+						do_sqlite_finish = true;
+						s->node->timer = 0;
+					}
+#endif
+
+					if (!g_scanner->ownerslot && !bEndStream) {
+						log(&addr, "Take scanner, nodeid %u slotid %s radioid %u", nodeid, slotid_str(slotid).c_str(), radioid);
+						g_scanner->ownerslot = s->slotid;
+						g_scanner->tick = g_tick;
+					}
+
+					bool forward_scanner_frame = (s->slotid == g_scanner->ownerslot);
+					if (forward_scanner_frame) {
+						g_scanner->tick = g_tick;
+						for (slot const* dest = g_scanner->subscribers; dest; dest = dest->next) {
+							if (dest->node)
+								add_send_target(dests, dest->node->addr, dest->slotid);
+						}
+					}
+
+					if (bEndStream && forward_scanner_frame) {
+						log(&addr, "Drop scanner, nodeid %u slotid %s radioid %u", nodeid, slotid_str(slotid).c_str(), radioid);
+						g_scanner->ownerslot = 0;
+					}
+				}
+			} else {
+				if (bStartStream)
+					log(&addr, "Nodeid %u keyup on non-existent group %u", nodeid, tg);
+				unsubscribe_from_group(s);
+			}
+		}
+	}
+
+#ifdef USE_SQLITE3
+	strftime(date_now, 100, "%d.%m.%Y / %H:%M:%S", localtime(&now));
+	if (do_sqlite_touch) {
+		std::lock_guard<std::mutex> lk(g_sqlite_lock);
+		sqlite_log_touch_active(std::string(logkey), date_now, radioid, tg, SLOT(slotid) + 1, nodeid, sqlite_touch_secs, 1, MON_SRC_LOCAL);
+#ifdef HAVE_HTTPMODE
+		monitor_note_event((int)radioid, (int)tg, MON_SRC_LOCAL, is_aprs_flag, 0);
+#endif
+	}
+	if (do_sqlite_finish) {
+		std::lock_guard<std::mutex> lk(g_sqlite_lock);
+		sqlite_log_finish_active(std::string(logkey), date_now, sqlite_finish_secs);
+	}
+#endif
+
+	if (!dests.empty())
+		fanout_packet(pk_in, pksize, dests);
+
+#ifdef USE_UPLINK
+	if (do_uplink_forward) {
+		std::lock_guard<std::mutex> lk(g_uplink_lock);
+		uplink_forward_dmrd(pk_in, pksize, 0);
+	}
+#else
+	if (do_uplink_forward) {
+		std::lock_guard<std::mutex> lk(g_obp_lock);
+		obp_forward_dmrd(pk_in, pksize, 0);
+	}
+#endif
+
+	if (parrot_job) {
+		pthread_t th;
+		pthread_create(&th, NULL, parrot_playback_thread_proc, parrot_job);
+	}
+}
+
+static size_t rx_worker_index_for_packet(const byte* pk, int sz)
+{
+	if (g_rx_workers.empty())
+		return 0;
+	if (sz == 55 && memcmp(pk, "DMRD", 4) == 0) {
+		dword sid = get4(pk + 16);
+		dword nid = get4(pk + 11);
+		return (size_t)(((sid ? sid : nid) % (dword)g_rx_workers.size()));
+	}
+	return 0;
+}
+
+static void rx_worker_proc(rx_worker_ctx* ctx)
+{
+	for (;;) {
+		rx_job job;
+		{
+			std::unique_lock<std::mutex> lk(ctx->m);
+			ctx->cv.wait(lk, [ctx]{ return ctx->stop || !ctx->q.empty(); });
+			if (ctx->stop && ctx->q.empty())
+				return;
+			job = std::move(ctx->q.front());
+			ctx->q.pop_front();
+		}
+		handle_rx_dmrd_parallel(job.addr, job.data.data(), (int)job.data.size());
+	}
+}
+
+static void start_rx_workers()
+{
+	if (g_worker_threads < 2)
+		return;
+	for (int i = 0; i < g_worker_threads; ++i) {
+		rx_worker_ctx* ctx = new rx_worker_ctx;
+		ctx->th = std::thread(rx_worker_proc, ctx);
+		g_rx_workers.push_back(ctx);
+	}
+}
+
+static void enqueue_rx_job(const sockaddr_in& addr, const byte* pk, int sz)
+{
+	if (g_rx_workers.empty()) {
+		handle_rx_dmrd_parallel(addr, pk, sz);
+		return;
+	}
+	size_t idx = rx_worker_index_for_packet(pk, sz);
+	rx_worker_ctx* ctx = g_rx_workers[idx];
+	{
+		std::lock_guard<std::mutex> lk(ctx->m);
+		rx_job job;
+		job.addr = addr;
+		job.data.assign(pk, pk + sz);
+		ctx->q.push_back(std::move(job));
+	}
+	ctx->cv.notify_one();
+}
+
 void handle_rx (sockaddr_in &addr, byte *pk, int pksize)
 {
     char date_now[100];
@@ -3362,12 +3769,6 @@ static void api_register(struct io* io, const char* method, const char* body) {
         return;
     }
 
-    if (exists_in_auth || exists_in_dmrids) {
-        std::string msg = std::string("{\"ok\":false,\"message\":\"DMR-ID already exists!\"}");
-        http_send_json(io, 409, "Conflict", msg);
-        return;
-    }
-
 	if (exists_in_auth && exists_in_dmrids) {
         std::string msg = std::string("{\"ok\":false,\"message\":\"DMR-ID already exists!\"}");
         http_send_json(io, 409, "Conflict", msg);
@@ -3388,17 +3789,6 @@ static void api_register(struct io* io, const char* method, const char* body) {
 			return;
 		}
 	}
-
-    if (!append_dmrids_file(g_dmrids_file, (dword)dmrid, callsign.c_str(), name.c_str(), err)) {
-        std::string msg = std::string("{\"ok\":false,\"message\":\"") + json_escape(err) + "\"}";
-        http_send_json(io, 500, "Server Error", msg);
-        return;
-    }
-    if (!append_auth_user_file(g_auth_file, (dword)dmrid, pass.c_str(), err)) {
-        std::string msg = std::string("{\"ok\":false,\"message\":\"") + json_escape(err) + "\"}";
-        http_send_json(io, 500, "Server Error", msg);
-        return;
-    }
 
     auth_load_now(g_auth_file);
     logmsg(LOG_GREEN, 0, "Web registration saved DMR-ID %u (%s %s)\n", (unsigned)dmrid, callsign.c_str(), name.c_str());
@@ -4891,6 +5281,9 @@ void process_config_file()
 		g_udp_port = c.getint ("Server","Port", g_udp_port);
 		strcpy (g_password, c.getstring ("Server","Password",g_password).c_str());
 		g_housekeeping_minutes = c.getint ("Server","Housekeeping", g_housekeeping_minutes);
+		g_worker_threads = c.getint ("Server","WorkerThreads", g_worker_threads);
+		if (g_worker_threads < 1) g_worker_threads = 1;
+		if (g_worker_threads > 32) g_worker_threads = 32;
 		g_keep_nodes_alive = c.getint("Homebrew", "KeepNodesAlive", g_keep_nodes_alive);
 		g_node_timeout = c.getint("Homebrew", "NodeTimeout", g_node_timeout);
 		g_relax_ip_change = c.getint("Homebrew", "RelaxIPChange", g_relax_ip_change);
@@ -4957,6 +5350,7 @@ void process_config_file()
 	logmsg (LOG_YELLOW, 0, "Debug         : %s\n", g_debug ? "Yes" : "No");
 	logmsg (LOG_YELLOW, 0, "Port          : %d\n", g_udp_port);
 	logmsg (LOG_YELLOW, 0, "Password      : %s\n", g_password);
+	logmsg (LOG_YELLOW, 0, "Workers       : %d\n", g_worker_threads);
 #ifdef USE_SQLITE3
 	logmsg (LOG_YELLOW, 0, "Log           : %s\n", g_log);
 	logmsg (LOG_YELLOW, 0, "SQLite rows   : %d\n", g_sqlite_log_max_rows);
@@ -5180,6 +5574,7 @@ int main(int argc, char **argv)
 
 	pthread_t th;
 	pthread_create (&th, NULL, time_thread_proc, NULL);
+	start_rx_workers();
 
 	for (;;) {
 		{
@@ -5224,7 +5619,12 @@ int main(int argc, char **argv)
 					show_packet (temp, ip, buf, sz);
 				}
 
-				handle_rx (addr, buf, sz);
+				if (g_worker_threads > 1 && sz == 55 && memcmp(buf, "DMRD", 4) == 0)
+					enqueue_rx_job(addr, buf, sz);
+				else {
+					std::lock_guard<std::mutex> lk(g_state_lock);
+					handle_rx(addr, buf, sz);
+				}
 			} else if (sz < 1) {
 				int err = GetInetError ();
 				log (&addr, "recvfrom error %d\n", err);
@@ -5233,21 +5633,31 @@ int main(int argc, char **argv)
 		}
 
 #ifdef USE_UPLINK
+		{
+			std::lock_guard<std::mutex> lk(g_state_lock);
         uplink_handle_rx_all();
         uplink_housekeeping_all();
+		}
 #else
+		{
+			std::lock_guard<std::mutex> lk(g_state_lock);
         obp_handle_rx_all();
         obp_housekeeping_all();
+		}
 #endif
 #ifdef HAVE_APRS
 		aprs_housekeeping();
 #endif
 		auth_housekeeping();
 #ifdef USE_SQLITE3
-		sqlite_log_cleanup_stale_active();
+		{
+			std::lock_guard<std::mutex> lk(g_sqlite_lock);
+			sqlite_log_cleanup_stale_active();
+		}
 #endif
 
 		if (g_sec - g_last_housekeeping_sec >= g_housekeeping_minutes * 60) {
+			std::lock_guard<std::mutex> lk(g_state_lock);
 			log (NULL, "Housekeeping, tick %u\n", starttick);
 
 			for (int ix=0; ix < HIGH_DMRID - LOW_DMRID; ix++) {

@@ -5,7 +5,7 @@ LINKOBJ  = $(SRCS:.cpp=.o) $(RES)
 LIBS     = -L/usr/lib -lsqlite3 -lpthread -lcrypto -lssl
 CXXINCS  = -I/usr/include
 BIN      = server
-CXXFLAGS = -DSQLITE3 $(CXXINCS) -DUSE_SQLITE3 -DUSE_OPENSSL -DUSE_UPLINK -DHAVE_APRS -DHAVE_SMS -DHAVE_HTTPMODE -fno-for-scope -Wreturn-type -O0 -Wno-write-strings
+CXXFLAGS = -DSQLITE3 $(CXXINCS) -DUSE_SQLITE3 -DUSE_OPENSSL -DUSE_UPLINK -DHAVE_APRS -DHAVE_SMS -DHAVE_HTTPMODE -fno-for-scope -std=gnu++11 -Wreturn-type -O2 -Wno-write-strings
 RM       = rm -f
 
 all: $(OBJS)
