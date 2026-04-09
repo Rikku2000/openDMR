@@ -113,6 +113,23 @@
             <div class="panel-meta" id="aprs-table-meta">No positions loaded</div>
           </div>
 
+          <div class="aprs-toolbar" aria-label="APRS table controls">
+            <label class="field aprs-search-field" for="aprs-search">
+              <span>Callsign search</span>
+              <input id="aprs-search" type="search" placeholder="Search callsign, display, DMR ID, or node" autocomplete="off" />
+            </label>
+            <div class="aprs-toolbar-actions">
+              <button id="aprs-search-go" class="nav-btn" type="button">Go to match</button>
+              <button id="aprs-search-clear" class="nav-btn" type="button">Clear</button>
+            </div>
+          </div>
+
+          <div class="aprs-pagination" aria-label="APRS pagination controls">
+            <button id="aprs-page-prev" class="nav-btn" type="button">Previous</button>
+            <span id="aprs-page-label" class="chip chip-soft">Page 1 / 1</span>
+            <button id="aprs-page-next" class="nav-btn" type="button">Next</button>
+          </div>
+
           <div class="table-wrap">
             <table class="table" id="tab-aprs" aria-label="APRS and hotspot position table">
               <thead>
