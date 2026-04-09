@@ -938,16 +938,30 @@ static talkgroup* talkgroup_lookup(dword tg)
 	return findgroup(tg, false);
 }
 
+static void talkgroup_meta_snapshot(dword tg, std::string* name, std::string* country)
+{
+	if (name) name->clear();
+	if (country) country->clear();
+	std::lock_guard<std::mutex> lk(g_state_lock);
+	talkgroup* g = talkgroup_lookup(tg);
+	if (!g)
+		return;
+	if (name) *name = g->name;
+	if (country) *country = g->country;
+}
+
 static std::string talkgroup_name_for(dword tg)
 {
-	talkgroup* g = talkgroup_lookup(tg);
-	return g ? g->name : "";
+	std::string name;
+	talkgroup_meta_snapshot(tg, &name, NULL);
+	return name;
 }
 
 static std::string talkgroup_country_for(dword tg)
 {
-	talkgroup* g = talkgroup_lookup(tg);
-	return g ? g->country : "";
+	std::string country;
+	talkgroup_meta_snapshot(tg, NULL, &country);
+	return country;
 }
 
 static void load_talkgroup_line(const char* raw)
@@ -4090,10 +4104,32 @@ static void api_register(struct io* io, const char* method, const char* body) {
     http_send_json(io, 200, "OK", msg);
 }
 
+struct api_log_row {
+    int id;
+    std::string date;
+    int radio;
+    int tg;
+    int slot;
+    int node;
+    int sec;
+    int active;
+    int conn;
+    int src;
+    int online;
+};
+
+struct api_active_row {
+    std::string date;
+    int radio;
+    int tg;
+    int slot;
+    int node;
+    int sec;
+    int src;
+};
+
 static void api_log(struct io* io, const char* path){
     if (!db){ http_send(500, "DB Closed", "application/json", "[]", io); return; }
-
-    sqlite_log_cleanup_stale_active();
 
     int limit = g_sqlite_log_max_rows;
     const char* k = strstr(path, "limit=");
@@ -4139,50 +4175,63 @@ static void api_log(struct io* io, const char* path){
 
     const char* q = (mode == LOG_MODE_RAW) ? q_raw : (mode == LOG_MODE_USER ? q_user : q_tg);
 
-    sqlite3_stmt* st = NULL;
-    if (sqlite3_prepare_v2(db, q, -1, &st, NULL) != SQLITE_OK) {
-        http_send(500, "Query Error", "application/json", "[]", io);
-        return;
+    std::vector<api_log_row> rows;
+    {
+        std::lock_guard<std::mutex> lk(g_sqlite_lock);
+        sqlite_log_cleanup_stale_active();
+
+        sqlite3_stmt* st = NULL;
+        if (sqlite3_prepare_v2(db, q, -1, &st, NULL) != SQLITE_OK) {
+            http_send(500, "Query Error", "application/json", "[]", io);
+            return;
+        }
+        sqlite3_bind_int(st, 1, limit);
+
+        while (sqlite3_step(st) == SQLITE_ROW){
+            api_log_row row;
+            const unsigned char* date = sqlite3_column_text(st, 1);
+            row.id = sqlite3_column_int(st, 0);
+            row.date = date ? (const char*)date : "";
+            row.radio = sqlite3_column_int(st, 2);
+            row.tg = sqlite3_column_int(st, 3);
+            row.slot = sqlite3_column_int(st, 4);
+            row.node = sqlite3_column_int(st, 5);
+            row.sec = sqlite3_column_int(st, 6);
+            row.active = sqlite3_column_int(st, 7);
+            row.conn = sqlite3_column_int(st, 8);
+            row.src = sqlite3_column_int(st, 9);
+            row.online = sqlite3_column_int(st, 10);
+            rows.push_back(row);
+        }
+        sqlite3_finalize(st);
     }
-    sqlite3_bind_int(st, 1, limit);
 
     char* out = (char*)malloc(65536);
     char* p = out; size_t left = 65536;
     appendf(&p, &left, "["); int first = 1;
 
-    while (sqlite3_step(st) == SQLITE_ROW){
-        int id    = sqlite3_column_int(st, 0);
-        const unsigned char* date = sqlite3_column_text(st, 1);
-        int radio = sqlite3_column_int(st, 2);
-        int tg    = sqlite3_column_int(st, 3);
-        int slot  = sqlite3_column_int(st, 4);
-        int node  = sqlite3_column_int(st, 5);
-        int sec   = sqlite3_column_int(st, 6);
-        int active= sqlite3_column_int(st, 7);
-        int conn  = sqlite3_column_int(st, 8);
-        int src   = sqlite3_column_int(st, 9);
-        int online= sqlite3_column_int(st, 10);
-		int mark_src=0, aprs=0, sms=0;
-		mark_read(radio, &mark_src, &aprs, &sms);
-        std::string callsign = callsign_json_for_radio(radio);
-		std::string tg_name = talkgroup_name_for((dword)tg);
-		std::string tg_country = talkgroup_country_for((dword)tg);
+    for (size_t i = 0; i < rows.size(); ++i) {
+        const api_log_row& row = rows[i];
+        int mark_src=0, aprs=0, sms=0;
+        mark_read(row.radio, &mark_src, &aprs, &sms);
+        std::string callsign = callsign_json_for_radio(row.radio);
+        std::string tg_name, tg_country;
+        talkgroup_meta_snapshot((dword)row.tg, &tg_name, &tg_country);
 
-		appendf(&p,&left,
-		  "%s{\"id\":%d,\"date\":\"%s\",\"radio\":%d,\"callsign\":\"%s\",\"tg\":%d,\"slot\":%d,"
-		  "\"tgName\":\"%s\",\"tgCountry\":\"%s\","
-		  "\"node\":%d,\"time\":%d,\"active\":%d,\"online\":%d,\"connect\":%d,"
-		  "\"src\":%d,\"aprs\":%d,\"sms\":%d}",
-		  first?"":",",
-		  id, date?(const char*)date:"", radio, json_escape(callsign).c_str(), tg, slot,
-		  json_escape(tg_name).c_str(), json_escape(tg_country).c_str(),
-		  node, sec, active, online, conn,
-		  src, aprs, sms);
+        appendf(&p,&left,
+          "%s{\"id\":%d,\"date\":\"%s\",\"radio\":%d,\"callsign\":\"%s\",\"tg\":%d,\"slot\":%d,"
+          "\"tgName\":\"%s\",\"tgCountry\":\"%s\","
+          "\"node\":%d,\"time\":%d,\"active\":%d,\"online\":%d,\"connect\":%d,"
+          "\"src\":%d,\"aprs\":%d,\"sms\":%d}",
+          first?"":",",
+          row.id, row.date.c_str(), row.radio, json_escape(callsign).c_str(), row.tg, row.slot,
+          json_escape(tg_name).c_str(), json_escape(tg_country).c_str(),
+          row.node, row.sec, row.active, row.online, row.conn,
+          row.src, aprs, sms);
 
         first = 0;
         if (left < 256) break;
     }
-    sqlite3_finalize(st);
 
     appendf(&p, &left, "]");
     http_send(200, "OK", "application/json", out, io);
@@ -4192,41 +4241,55 @@ static void api_log(struct io* io, const char* path){
 static void api_active(struct io* io){
     if (!db){ http_send(500, "DB Closed", "application/json", "[]", io); return; }
 
-    sqlite_log_cleanup_stale_active();
-
     char q[256];
     sprintf(q,
         "SELECT DATE, RADIO, TG, SLOT, NODE, TIME, SRC "
         "FROM LOG WHERE ACTIVE=1 "
         "ORDER BY SEQ DESC, ID DESC LIMIT %d", g_sqlite_active_api_limit);
 
-    sqlite3_stmt* st=NULL; sqlite3_prepare_v2(db,q,-1,&st,NULL);
+    std::vector<api_active_row> rows;
+    {
+        std::lock_guard<std::mutex> lk(g_sqlite_lock);
+        sqlite_log_cleanup_stale_active();
+
+        sqlite3_stmt* st=NULL;
+        sqlite3_prepare_v2(db,q,-1,&st,NULL);
+        while (sqlite3_step(st)==SQLITE_ROW){
+            api_active_row row;
+            const unsigned char* date=sqlite3_column_text(st,0);
+            row.date = date ? (const char*)date : "";
+            row.radio=sqlite3_column_int(st,1);
+            row.tg=sqlite3_column_int(st,2);
+            row.slot=sqlite3_column_int(st,3);
+            row.node=sqlite3_column_int(st,4);
+            row.sec=sqlite3_column_int(st,5);
+            row.src=sqlite3_column_int(st,6);
+            rows.push_back(row);
+        }
+        sqlite3_finalize(st);
+    }
 
     char* out = (char*)malloc(65536); char* p=out; size_t left=65536;
     appendf(&p,&left,"["); int first=1;
 
-    while (sqlite3_step(st)==SQLITE_ROW){
-        const unsigned char* date=sqlite3_column_text(st,0);
-        int radio=sqlite3_column_int(st,1), tg=sqlite3_column_int(st,2),
-            slot=sqlite3_column_int(st,3), node=sqlite3_column_int(st,4),
-            sec=sqlite3_column_int(st,5), src=sqlite3_column_int(st,6);
-		int mark_src=0, aprs=0, sms=0;
-		mark_read(radio, &mark_src, &aprs, &sms);
-        std::string callsign = callsign_json_for_radio(radio);
-		std::string tg_name = talkgroup_name_for((dword)tg);
-		std::string tg_country = talkgroup_country_for((dword)tg);
+    for (size_t i = 0; i < rows.size(); ++i) {
+        const api_active_row& row = rows[i];
+        int mark_src=0, aprs=0, sms=0;
+        mark_read(row.radio, &mark_src, &aprs, &sms);
+        std::string callsign = callsign_json_for_radio(row.radio);
+        std::string tg_name, tg_country;
+        talkgroup_meta_snapshot((dword)row.tg, &tg_name, &tg_country);
 
-		appendf(&p,&left,
-		  "%s{\"date\":\"%s\",\"radio\":%d,\"callsign\":\"%s\",\"tg\":%d,\"slot\":%d,"
-		  "\"tgName\":\"%s\",\"tgCountry\":\"%s\",\"node\":%d,\"time\":%d,"
-		  "\"src\":%d,\"aprs\":%d,\"sms\":%d}",
-		  first?"":",", date?(const char*)date:"", radio, json_escape(callsign).c_str(), tg, slot,
-		  json_escape(tg_name).c_str(), json_escape(tg_country).c_str(), node, sec,
-		  src, aprs, sms);
+        appendf(&p,&left,
+          "%s{\"date\":\"%s\",\"radio\":%d,\"callsign\":\"%s\",\"tg\":%d,\"slot\":%d,"
+          "\"tgName\":\"%s\",\"tgCountry\":\"%s\",\"node\":%d,\"time\":%d,"
+          "\"src\":%d,\"aprs\":%d,\"sms\":%d}",
+          first?"":",", row.date.c_str(), row.radio, json_escape(callsign).c_str(), row.tg, row.slot,
+          json_escape(tg_name).c_str(), json_escape(tg_country).c_str(), row.node, row.sec,
+          row.src, aprs, sms);
         first=0;
         if (left < 256) break;
     }
-    sqlite3_finalize(st);
     appendf(&p,&left,"]");
     http_send(200, "OK", "application/json", out, io); free(out);
 }
