@@ -81,6 +81,46 @@ async function fetchText(url) {
   return response.text();
 }
 
+function repairAprsJson(text) {
+  if (typeof text !== 'string' || !text) return text;
+  return text
+    .replaceAll('"symbolTable":"\","', '"symbolTable":"\\","')
+    .replaceAll('"symbolTable":"\"}', '"symbolTable":"\\"}')
+    .replaceAll('"symbolCode":"\","', '"symbolCode":"\\","')
+    .replaceAll('"symbolCode":"\"}', '"symbolCode":"\\"}');
+}
+
+async function fetchAprsJSON(url = '/api/aprs') {
+  const headers = new Headers({ 'Cache-Control': 'no-store' });
+  if (authState.token) headers.set('X-Auth-Token', authState.token);
+  const response = await fetch(url, { cache: 'no-store', headers });
+  const text = await response.text();
+
+  if (!response.ok) {
+    let payload = null;
+    try {
+      payload = JSON.parse(text);
+    } catch (error) {
+      payload = null;
+    }
+    const message = payload && payload.message ? payload.message : `HTTP ${response.status}`;
+    const err = new Error(message);
+    err.status = response.status;
+    err.payload = payload;
+    throw err;
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    const repaired = repairAprsJson(text);
+    if (repaired !== text) {
+      return JSON.parse(repaired);
+    }
+    throw error;
+  }
+}
+
 function setText(id, value) {
   const el = document.getElementById(id);
   if (el) el.textContent = value;
@@ -1067,7 +1107,7 @@ async function renderAprsMap() {
   if (!hasTable && !hasMap) return;
 
   try {
-    const data = await fetchJSON('/api/aprs');
+    const data = await fetchAprsJSON('/api/aprs');
     const rows = Array.isArray(data) ? data : [];
     const stations = rows.filter((row) => row.kind === 'station');
     const hotspots = rows.filter((row) => row.kind === 'hotspot');

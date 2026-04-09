@@ -4,12 +4,12 @@
 #define _CRT_SECURE_NO_WARNINGS
 
 #define DMR_VERSION 1
-#define DMR_RELEASE "0.2.2"
+#define DMR_RELEASE "0.2.4"
 #define OB_VERSION 0
 #define OB_RELEASE "7"
 #ifdef HAVE_APRS
 #define APRS_VERSION 0
-#define APRS_RELEASE "3"
+#define APRS_RELEASE "6"
 #endif
 #ifdef HAVE_SMS
 #define SMS_VERSION 0

@@ -4304,16 +4304,19 @@ static void api_aprs(struct io* io){
         if (entry.dmrid)
             read_profile_for_dmrid(entry.dmrid, callsign, name, err);
 
+        std::string symbol_table(1, entry.symbol_table ? entry.symbol_table : '/');
+        std::string symbol_code(1, entry.symbol_code ? entry.symbol_code : '>');
+
         appendf(&p, &left,
             "%s{\"kind\":\"station\",\"callsign\":\"%s\",\"display\":\"%s\",\"name\":\"%s\",\"comment\":\"%s\","
-            "\"symbolTable\":\"%c\",\"symbolCode\":\"%c\",\"latitude\":%.6f,\"longitude\":%.6f,\"lastSeenSec\":%d,\"dmrid\":%u}",
+            "\"symbolTable\":\"%s\",\"symbolCode\":\"%s\",\"latitude\":%.6f,\"longitude\":%.6f,\"lastSeenSec\":%d,\"dmrid\":%u}",
             first ? "" : ",",
             json_escape(entry.callsign).c_str(),
             json_escape(callsign).c_str(),
             json_escape(name).c_str(),
             json_escape(entry.comment).c_str(),
-            entry.symbol_table ? entry.symbol_table : '/',
-            entry.symbol_code ? entry.symbol_code : '>',
+            json_escape(symbol_table).c_str(),
+            json_escape(symbol_code).c_str(),
             entry.latitude,
             entry.longitude,
             since,
