@@ -466,7 +466,9 @@ int  g_auth_reload_secs = 0;
 int  g_auth_unknown_default = 0;
 
 static std::map<dword, std::string> g_auth_map;
+static std::mutex g_auth_lock;
 static dword g_auth_last_load_sec = 0;
+static std::string auth_lookup_pass_copy(dword dmrid);
 
 struct WebSession {
     dword dmrid;
@@ -1398,18 +1400,21 @@ void logmsg(enum LogColorLevel level, int timed, const char *fmt, ...) {
 void log (sockaddr_in *addr, PCSTR fmt, ...) {
 	int err = errno;
 	int nerr = GetInetError();
+	(void)addr;
 
 	try {
-		char temp[300];
+		char temp[2048];
 		va_list marker;
 		va_start (marker, fmt);
-		time_t tt = time(NULL);
-		tm *t = localtime(&tt);
+		vsnprintf(temp, sizeof(temp), fmt, marker);
+		va_end(marker);
+		temp[sizeof(temp)-1] = 0;
 
-		vsprintf (temp, fmt, marker);
-		char *p = temp + strlen(temp) - 1;
-		while (p >= temp && (*p == '\r' || *p == '\n'))
-			*p-- = 0;
+		if (temp[0]) {
+			char *p = temp + strlen(temp) - 1;
+			while (p >= temp && (*p == '\r' || *p == '\n'))
+				*p-- = 0;
+		}
 
 		puts (temp);
 	} catch (...) {
@@ -1910,7 +1915,7 @@ void unsubscribe_from_group(slot *s)
 {
 	if (s->tg) {
 
-		log (&s->node->addr, "Unsubscribe group %u node %d slot %d from talkgroup %d\n", s->tg, s->node->nodeid, SLOT(s->slotid)+1);
+		log (&s->node->addr, "Unsubscribe node %d slot %d from talkgroup %u\n", s->node->nodeid, SLOT(s->slotid)+1, s->tg);
 
 		talkgroup *g = findgroup (s->tg, false);
 
@@ -1941,7 +1946,7 @@ void subscribe_to_group(slot *s, talkgroup *g)
 {
 	if (s->tg != g->tg) {
 
-		log (&s->node->addr, "Subscribe group %u node %d slot %d to talkgroup %d\n", g->tg, s->node->nodeid, SLOT(s->slotid)+1);
+		log (&s->node->addr, "Subscribe node %d slot %d to talkgroup %u\n", s->node->nodeid, SLOT(s->slotid)+1, g->tg);
 
 		unsubscribe_from_group(s);
 
@@ -2756,11 +2761,13 @@ void handle_rx (sockaddr_in &addr, byte *pk, int pksize)
 
 		const byte* remotehash = pk + 8;
 
+		std::string pass_copy;
 		const char* pass = NULL;
 		bool permitted = true;
 
 		if (g_auth_enabled) {
-			pass = auth_lookup_pass(nodeid);
+			pass_copy = auth_lookup_pass_copy(nodeid);
+			pass = pass_copy.empty() ? NULL : pass_copy.c_str();
 			if (!pass) {
 				if (g_auth_unknown_default && g_password)
 					pass = g_password;
@@ -3168,8 +3175,8 @@ static bool dmrid_exists_in_dmrids_file(const char* path, dword dmrid, std::stri
 }
 
 static bool auth_verify_password(dword dmrid, const std::string& password) {
-    const char* saved = auth_lookup_pass(dmrid);
-    return saved && password == saved;
+    std::string saved = auth_lookup_pass_copy(dmrid);
+    return !saved.empty() && password == saved;
 }
 
 static bool auth_update_password_file(const char* path, dword dmrid, const char* pass, std::string& err) {
@@ -3297,8 +3304,11 @@ static bool auth_load_now(const char* path) {
     }
     fclose(f);
 
-    g_auth_map.swap(tmp);
-    g_auth_last_load_sec = g_sec;
+    {
+        std::lock_guard<std::mutex> lk(g_auth_lock);
+        g_auth_map.swap(tmp);
+        g_auth_last_load_sec = g_sec;
+    }
 	logmsg (LOG_YELLOW, 0, "Auth: loaded %d entries from %s\n\n", added, g_auth_file);
     return true;
 }
@@ -3314,10 +3324,11 @@ void auth_housekeeping() {
         auth_load_now(g_auth_file);
 }
 
-const char* auth_lookup_pass(dword dmrid) {
+static std::string auth_lookup_pass_copy(dword dmrid) {
+    std::lock_guard<std::mutex> lk(g_auth_lock);
     std::map<dword, std::string>::iterator it = g_auth_map.find(dmrid);
-    if (it == g_auth_map.end()) return NULL;
-    return it->second.c_str();
+    if (it == g_auth_map.end()) return std::string();
+    return it->second;
 }
 
 #ifdef HAVE_SMS
@@ -4329,7 +4340,7 @@ static void api_aprs(struct io* io){
 
         appendf(&p, &left,
             "%s{\"kind\":\"hotspot\",\"callsign\":\"%s\",\"display\":\"%s\",\"name\":\"%s\",\"latitude\":%.6f,\"longitude\":%.6f,"
-            "\"lastSeenSec\":%d,\"dmrid\":%u,\"node\":%u,\"auth\":%d,\"currentTs1\":%u,\"currentTs2\":%u,\"staticTs1\":\"%s\",\"staticTs2\":\"%s\"}",
+            "\"lastSeenSec\":%d,\"dmrid\":%u,\"node\":%u,\"ip\":\"%s\",\"auth\":%d,\"currentTs1\":%u,\"currentTs2\":%u,\"staticTs1\":\"%s\",\"staticTs2\":\"%s\"}",
             first ? "" : ",",
             json_escape(callsign).c_str(),
             json_escape(callsign.empty() ? (name.empty() ? std::to_string((unsigned)n.dmrid) : name) : callsign).c_str(),
@@ -4339,6 +4350,7 @@ static void api_aprs(struct io* io){
             since,
             (unsigned)n.dmrid,
             (unsigned)n.nodeid,
+            json_escape(ip).c_str(),
             n.auth ? 1 : 0,
             (unsigned)n.current_ts1,
             (unsigned)n.current_ts2,
@@ -4835,8 +4847,9 @@ bool resolve_hostname_ipv4(PCSTR host, in_addr* out)
 static int obp_hmac_sha1(const void* msg, size_t len, const char* key, byte out20[20]) {
 #ifdef USE_OPENSSL
     unsigned int maclen = 0;
-    const byte* mac = HMAC(EVP_sha1(), key, (int)strlen(key),
-                           (const unsigned char*)msg, len, NULL, &maclen);
+    unsigned char macbuf[EVP_MAX_MD_SIZE];
+    unsigned char* mac = HMAC(EVP_sha1(), key, (int)strlen(key),
+                              (const unsigned char*)msg, len, macbuf, &maclen);
     if (!mac || maclen < 20) return -1;
     memcpy(out20, mac, 20);
     return 0;
