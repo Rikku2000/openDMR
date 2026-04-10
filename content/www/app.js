@@ -15,6 +15,8 @@ let aprsMarkers = new Map();
 let aprsPage = 1;
 const APRS_PAGE_SIZE = 15;
 let aprsSearchQuery = '';
+let systemTgPage = 1;
+const SYSTEMTG_PAGE_SIZE = 15;
 
 function applyTheme() {
   const theme = localStorage.getItem(THEME_KEY) || 'dark';
@@ -939,21 +941,93 @@ function formatTgValue(value) {
   return text ? text : '—';
 }
 
+function updateSystemTgPagination(totalCount) {
+  const totalPages = Math.max(1, Math.ceil(totalCount / SYSTEMTG_PAGE_SIZE));
+  if (systemTgPage > totalPages) systemTgPage = totalPages;
+  if (systemTgPage < 1) systemTgPage = 1;
+
+  const prevBtn = document.getElementById('systemstg-page-prev');
+  const nextBtn = document.getElementById('systemstg-page-next');
+  const label = document.getElementById('systemstg-page-label');
+
+  if (prevBtn) prevBtn.disabled = systemTgPage <= 1 || totalCount === 0;
+  if (nextBtn) nextBtn.disabled = systemTgPage >= totalPages || totalCount === 0;
+  if (label) label.textContent = totalCount ? `Page ${systemTgPage} / ${totalPages}` : 'Page 0 / 0';
+}
+
+function renderSystemTgsTable(data = []) {
+  const tbody = document.querySelector('#tab-systemstg tbody');
+  if (!tbody) return;
+
+  tbody.innerHTML = '';
+  updateSystemTgPagination(data.length);
+
+  if (!data.length) {
+    const tr = document.createElement('tr');
+    const cell = document.createElement('td');
+    cell.colSpan = 9;
+    cell.textContent = 'No hotspot static talkgroups reported yet';
+    tr.append(cell);
+    tbody.append(tr);
+    setText('systemstg-meta', 'No hotspot data');
+    return;
+  }
+
+  const start = (systemTgPage - 1) * SYSTEMTG_PAGE_SIZE;
+  const pageRows = data.slice(start, start + SYSTEMTG_PAGE_SIZE);
+
+  pageRows.forEach((row) => {
+    const tr = document.createElement('tr');
+    tr.append(td(row.dmrid || '—', 'numeric emphasis'));
+    tr.append(td(row.callsign || row.name || '—', row.callsign || row.name ? 'emphasis' : ''));
+    tr.append(td(row.node || '—', 'numeric'));
+    tr.append(td(row.auth ? 'YES' : 'NO', row.auth ? 'ok' : 'bad'));
+    tr.append(td(row.currentTs1 || '—', row.currentTs1 ? 'numeric' : ''));
+    tr.append(td(row.currentTs2 || '—', row.currentTs2 ? 'numeric' : ''));
+    tr.append(td(formatTgValue(row.staticTs1), row.staticTs1 ? 'emphasis' : ''));
+    tr.append(td(formatTgValue(row.staticTs2), row.staticTs2 ? 'emphasis' : ''));
+    tr.append(td(formatSince(row.lastSeenSec), 'numeric'));
+    tbody.append(tr);
+  });
+
+  const end = Math.min(start + pageRows.length, data.length);
+  setText('systemstg-meta', `Showing ${start + 1}-${end} of ${data.length} hotspot${data.length === 1 ? '' : 's'}`);
+}
+
+function initSystemTgControls() {
+  if (page !== 'systemstg') return;
+  const prevBtn = document.getElementById('systemstg-page-prev');
+  const nextBtn = document.getElementById('systemstg-page-next');
+  if ((!prevBtn && !nextBtn) || (prevBtn && prevBtn.dataset.bound === '1')) return;
+
+  if (prevBtn) {
+    prevBtn.dataset.bound = '1';
+    prevBtn.addEventListener('click', () => {
+      systemTgPage -= 1;
+      renderSystemTgs();
+    });
+  }
+
+  if (nextBtn) {
+    nextBtn.dataset.bound = '1';
+    nextBtn.addEventListener('click', () => {
+      systemTgPage += 1;
+      renderSystemTgs();
+    });
+  }
+}
+
 async function renderSystemTgs() {
   const tbody = document.querySelector('#tab-systemstg tbody');
   if (!tbody) return;
 
+  initSystemTgControls();
+
   try {
     const data = await fetchJSON('/api/systemstg');
-    tbody.innerHTML = '';
+    renderSystemTgsTable(Array.isArray(data) ? data : []);
 
     if (!data.length) {
-      const tr = document.createElement('tr');
-      const cell = document.createElement('td');
-      cell.colSpan = 10;
-      cell.textContent = 'No hotspot static talkgroups reported yet';
-      tr.append(cell);
-      tbody.append(tr);
       setText('systemstg-metric-hotspots', '0');
       setText('systemstg-metric-hotspots-sub', 'Waiting for MMDVM config frames');
       setText('systemstg-metric-unique', '0');
@@ -962,7 +1036,6 @@ async function renderSystemTgs() {
       setText('systemstg-metric-ts1-sub', 'No TS1 assignments');
       setText('systemstg-metric-ts2', '0');
       setText('systemstg-metric-ts2-sub', 'No TS2 assignments');
-      setText('systemstg-meta', 'No hotspot data');
       setText('systemstg-status', 'Idle');
       setChipTone('systemstg-status', 'soft');
       setText('systemstg-summary', 'No static talkgroups announced by hotspots');
@@ -974,18 +1047,6 @@ async function renderSystemTgs() {
     let ts2Count = 0;
 
     data.forEach((row) => {
-      const tr = document.createElement('tr');
-      tr.append(td(row.dmrid || '—', 'numeric emphasis'));
-      tr.append(td(row.callsign || row.name || '—', row.callsign || row.name ? 'emphasis' : ''));
-      tr.append(td(row.node || '—', 'numeric'));
-      tr.append(td(row.auth ? 'YES' : 'NO', row.auth ? 'ok' : 'bad'));
-      tr.append(td(row.currentTs1 || '—', row.currentTs1 ? 'numeric' : ''));
-      tr.append(td(row.currentTs2 || '—', row.currentTs2 ? 'numeric' : ''));
-      tr.append(td(formatTgValue(row.staticTs1), row.staticTs1 ? 'emphasis' : ''));
-      tr.append(td(formatTgValue(row.staticTs2), row.staticTs2 ? 'emphasis' : ''));
-      tr.append(td(formatSince(row.lastSeenSec), 'numeric'));
-      tbody.append(tr);
-
       const ts1 = String(row.staticTs1 || '').split(',').map((item) => item.trim()).filter(Boolean);
       const ts2 = String(row.staticTs2 || '').split(',').map((item) => item.trim()).filter(Boolean);
       ts1.forEach((tg) => uniqueTgs.add(tg));
@@ -1005,7 +1066,6 @@ async function renderSystemTgs() {
     setText('systemstg-metric-ts1-sub', ts1Count ? 'Total TS1 static assignments' : 'No TS1 assignments');
     setText('systemstg-metric-ts2', String(ts2Count));
     setText('systemstg-metric-ts2-sub', ts2Count ? 'Total TS2 static assignments' : 'No TS2 assignments');
-    setText('systemstg-meta', `${data.length} hotspot${data.length === 1 ? '' : 's'} loaded`);
     setText('systemstg-status', 'Live');
     setChipTone('systemstg-status', '');
     setText('systemstg-summary', `${latestName} seen ${formatSince(latest?.lastSeenSec)} · ${uniqueTgs.size} unique static talkgroup${uniqueTgs.size === 1 ? '' : 's'}`);
@@ -1014,10 +1074,11 @@ async function renderSystemTgs() {
     tbody.innerHTML = '';
     const tr = document.createElement('tr');
     const cell = document.createElement('td');
-    cell.colSpan = 10;
+    cell.colSpan = 9;
     cell.textContent = 'Unable to load hotspot static talkgroups';
     tr.append(cell);
     tbody.append(tr);
+    updateSystemTgPagination(0);
     setText('systemstg-meta', 'Request failed');
     setText('systemstg-status', 'Unavailable');
     setChipTone('systemstg-status', 'bad');
@@ -1054,13 +1115,7 @@ function aprsDetailText(row) {
     return row.comment ? String(row.comment) : 'Live APRS station packet';
   }
   const parts = [];
-  if (row.staticTs1) parts.push(`TS1 ${row.staticTs1}`);
-  if (row.staticTs2) parts.push(`TS2 ${row.staticTs2}`);
-  if (!parts.length && (row.currentTs1 || row.currentTs2)) {
-    if (row.currentTs1) parts.push(`Current TS1 ${row.currentTs1}`);
-    if (row.currentTs2) parts.push(`Current TS2 ${row.currentTs2}`);
-  }
-  return parts.length ? parts.join(' · ') : 'Hotspot location';
+  return parts.length ? parts.join(' · ') : 'Hotspot via openDMR';
 }
 
 function getAprsRowLabel(row) {
@@ -1177,12 +1232,12 @@ function renderAprsTable(filteredRows = getFilteredAprsRows()) {
     linkBtn.addEventListener('click', () => focusAprsRow(row));
     displayCell.append(linkBtn);
     tr.append(displayCell);
-
     tr.append(td(row.dmrid || '—', 'numeric'));
     tr.append(td(row.node || '—', 'numeric'));
     tr.append(td(formatCoordinate(row.latitude), 'coord'));
     tr.append(td(formatCoordinate(row.longitude), 'coord'));
     tr.append(td(formatSince(row.lastSeenSec), 'numeric'));
+    tr.append(td(aprsDetailText(row), aprsDetailText(row) !== '—' ? 'emphasis' : ''));
     tbody.append(tr);
   });
 
@@ -1250,25 +1305,34 @@ function initAprsControls() {
 
 function ensureAprsMap() {
   if (page !== 'maps') return null;
+
   const mapEl = document.getElementById('aprs-map');
   if (!mapEl || typeof window.L === 'undefined') return null;
+
   if (aprsMap) {
     setTimeout(() => aprsMap.invalidateSize(), 0);
     return aprsMap;
   }
 
-  aprsMap = window.L.map(mapEl, { preferCanvas: true }).setView([20, 0], 2);
-  window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  aprsMap = window.L.map(mapEl, {
+    preferCanvas: true,
     center: [51.1657, 10.4515],
     zoom: 6,
     minZoom: 3,
     maxZoom: 12,
+    maxBounds: [[-85, -180], [85, 180]],
     maxBoundsViscosity: 1.0,
-    worldCopyJump: false,
+    worldCopyJump: false
+  });
+
+  window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    noWrap: true,
     attribution: '&copy; OpenStreetMap contributors'
   }).addTo(aprsMap);
+
   aprsMapLayer = window.L.layerGroup().addTo(aprsMap);
   setTimeout(() => aprsMap.invalidateSize(), 0);
+
   return aprsMap;
 }
 
@@ -1285,6 +1349,9 @@ function aprsPopupHtml(row) {
   if (row.node) lines.push(`<div class="map-popup-meta"><strong>Node:</strong> ${escapeHtml(row.node)}</div>`);
   lines.push(`<div class="map-popup-meta"><strong>Lat/Lon:</strong> ${escapeHtml(formatCoordinate(row.latitude))}, ${escapeHtml(formatCoordinate(row.longitude))}</div>`);
   lines.push(`<div class="map-popup-meta"><strong>Last seen:</strong> ${escapeHtml(formatSince(row.lastSeenSec))}</div>`);
+
+  const details = aprsDetailText(row);
+  if (details && details !== '—') lines.push(`<div class="map-popup-meta"><strong>Details:</strong> ${escapeHtml(details)}</div>`);
 
   return lines.join('');
 }
@@ -1364,7 +1431,7 @@ async function renderAprsMap() {
     setText('aprs-metric-total', String(rows.length));
     setText('aprs-metric-total-sub', rows.length ? 'Stations plus hotspot markers' : 'Waiting for positions');
     setText('aprs-metric-latest', latestName);
-    setText('aprs-metric-latest-sub', latest ? formatSince(latest.lastSeenSec) : '');
+    setText('aprs-metric-latest-sub', latest ? `${formatSince(latest.lastSeenSec)} · ${aprsDetailText(latest)}` : 'No packets yet');
   } catch (error) {
     console.error('aprs:', error);
     aprsRows = [];
@@ -1507,6 +1574,7 @@ ensureAuthChrome();
 initRegistrationForm();
 initProfileForm();
 initAprsControls();
+initSystemTgControls();
 renderClock();
 renderProfileView();
 loadRuntimeConfig().then(refreshSession);
