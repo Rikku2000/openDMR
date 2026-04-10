@@ -5,7 +5,7 @@
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
 <title>openDMR</title>
-<meta content="openDMR: a cross-platform C++ Digital Mobile Radio (DMR) network server with Homebrew node auth, static TS1/TS2 talkgroup routing, APRS, SMS, SQLite logging, embedded HTTP monitoring, and multi-peer OpenBridge or unified uplink support." name="description"/>
+<meta content="openDMR: a cross-platform C++ Digital Mobile Radio (DMR) network server with Homebrew node auth, static TS1/TS2 talkgroup routing, APRS and hotspot location feeds, SMS, SQLite logging, embedded HTTP monitoring, APRS/map and hotspot pages, and multi-peer OpenBridge or unified uplink support." name="description"/>
 <style>
     :root {
       --bg: #0f1115;
@@ -237,7 +237,9 @@
 <div class="group">
 <h4>Usage</h4>
 <a href="#openbridge">Uplinks &amp; OpenBridge</a>
-<a href="#dvmanager">DV Manager &amp; Browser Tools</a><a href="#webmon">Web Monitor &amp; API</a>
+<a href="#dvmanager">DV Manager &amp; Browser Tools</a>
+<a href="#aprsmap">Hotspot &amp; APRS Map</a>
+<a href="#webmon">Web Monitor &amp; API</a>
 <a href="#runtime">Runtime &amp; CLI</a>
 <a href="#logging">Logging</a>
 <a href="#faq">FAQ</a>
@@ -257,10 +259,10 @@
 <h2>Introduction</h2>
 <p class="lead">
 <strong>openDMR</strong> is a cross-platform C++ Digital Mobile Radio (DMR) master/server that authenticates Homebrew nodes,
-          routes group and private traffic, supports static TS1/TS2 subscriptions, and optionally adds APRS, DMR-SMS,
-          SQLite logging, an embedded HTTP UI, and multi-peer uplinks/OpenBridge bridging.
+          routes group and private traffic, supports static TS1/TS2 subscriptions, and optionally adds APRS, hotspot location capture,
+          DMR-SMS, SQLite logging, a multi-page embedded HTTP UI, and multi-peer uplinks/OpenBridge bridging.
         </p>
-<div class="callout ok"><strong>Highlights:</strong> UDP Homebrew networking, SHA-256 repeater auth, static talkgroup config via <code>RPTC</code>, Parrot echo TG, APRS/SMS modules, SQLite logging, embedded web dashboard/monitor, classic OpenBridge peers, and optional unified uplinks for Homebrew/OpenBridge backbones.</div>
+<div class="callout ok"><strong>Highlights:</strong> UDP Homebrew networking, SHA-256 repeater auth, static talkgroup config via <code>RPTC</code>, optional hotspot <code>LAT/LON</code> capture, APRS/SMS modules, SQLite logging, embedded dashboard/monitor plus Hotspot/Map pages, classic OpenBridge peers, and optional unified uplinks for Homebrew/OpenBridge backbones.</div>
 </section>
 <section class="card" id="features">
 <h2>Features</h2>
@@ -271,16 +273,16 @@
 <li>Talkgroup routing with owner-slot arbitration, scanner TG fan-out, and per-slot static TS1/TS2 subscriptions</li>
 <li>Private-call forwarding to the last seen destination slot plus Parrot echo playback on TG <code>9990</code></li>
 <li>SHA-256 challenge/response auth with CSV-backed per-node passwords and configurable unknown-ID policy</li>
-<li>Optional APRS heard reporting with DMR-ID to callsign lookup and reconnect/keepalive handling</li>
+<li>Optional APRS heard reporting plus APRS-IS position parsing, DMR-ID to callsign lookup, reconnect/keepalive handling, and merged APRS/hotspot map data</li>
 <li>Optional DMR-SMS buffering with TG allow-lists, private-call policy, frame/time limits, and UDP emission to external tools</li>
 <li>Optional parallel DMRD receive workers via <code>WorkerThreads</code> (1..32), with stream/node sharding to preserve packet affinity</li></ul>
 </div>
 <div class="col-6">
 <ul>
 <li>Optional SQLite3 activity database with recent log, active-call, and online status views</li>
-<li>Embedded HTTP monitor with static file serving plus JSON/text endpoints for config, auth, log, active calls, OpenBridge status, and raw <code>/STAT</code></li><li>Additional monitor JSON for static TS1/TS2 visibility via <code>/api/systemstg</code>, alongside richer log grouping modes for recent activity</li>
+<li>Embedded HTTP monitor with static file serving plus JSON/text endpoints for config, auth, log, active calls, APRS/map data, OpenBridge status, and raw <code>/STAT</code></li><li>Additional monitor JSON for static TS1/TS2 visibility via <code>/api/systemstg</code> and merged APRS/hotspot positions via <code>/api/aprs</code>, alongside richer log grouping modes for recent activity</li>
 <li>Self-service web registration, login, logout, and profile updates backed by <code>auth_users.csv</code> and the configured <code>DMRIds.dat</code> file</li>
-<li>Modern bundled web UI: Dashboard, Monitor, OpenBridge, DV Manager, Register, and Profile</li>
+<li>Modern bundled web UI: Dashboard, Monitor, OpenBridge, Hotspot, Map, DV Manager, Register, and Profile</li>
 <li>Classic multi-peer OpenBridge mode with up to 3 peers, TG filters, DNS refresh, HBLink framing, optional enhanced HMAC, and relaxed checks</li>
 <li>When built with <code>USE_UPLINK</code>: up to 8 generic uplinks plus 3 OpenBridge-class uplinks, including Homebrew login/auth/ping handling and upstream static TS1/TS2 configuration</li>
 <li>Radio blacklist support, DMR-ID profile lookups, bundled INI parsing, and Linux/Windows portability</li>
@@ -303,7 +305,7 @@ content\server.exe</code></pre>
 </section>
 <section class="card" id="diagram">
 <h2>Architecture</h2>
-<p>The core is an event-driven UDP loop with light worker threads for timing and parrot playback; APRS, SMS, OpenBridge, and the embedded HTTP monitor are optional sub-systems layered around the same server state.</p>
+<p>The core is an event-driven UDP loop with light worker threads for timing and parrot playback; APRS, hotspot location snapshots, SMS, OpenBridge, and the embedded HTTP monitor are optional sub-systems layered around the same server state. Current builds also maintain an APRS position cache and expose merged hotspot/APRS snapshots to the bundled map UI.</p>
 <div id="svgwrap" style="background:var(--panel-2); border:1px solid var(--border); border-radius:12px; padding:10px;">
 <svg height="280" id="diagramSVG" viewbox="0 0 900 280" width="100%"></svg>
 </div>
@@ -316,6 +318,7 @@ content\server.exe</code></pre>
 <li>POSIX sockets (Linux) or WinSock (Windows)</li>
 <li>(Optional) SQLite3 for <code>/api/log</code>, <code>/api/active</code>, and persistent activity state</li>
 <li>(Optional) OpenSSL for enhanced OpenBridge HMAC helpers</li>
+<li>(Browser runtime) the bundled map page loads Leaflet/OpenStreetMap tiles from public CDNs/services</li>
 </ul>
 <h3>Compile</h3>
 <pre><code>g++ -O2 -std=c++17 server.cpp -o dmr -lpthread</code></pre>
@@ -334,9 +337,12 @@ content\server.exe</code></pre>
 <tr><td><code>dmr.conf</code></td><td>Primary runtime configuration file</td></tr>
 <tr><td><code>auth_users.csv</code></td><td>DMR-ID to password database for node auth and web login when <code>[Auth] Enable=1</code></td></tr>
 <tr><td><code>DMRIds.dat</code></td><td>Default profile directory used by registration, login/profile lookups, and callsign/name enrichment; path is configurable via <code>[File] DMRIds</code></td></tr>
+<tr><td><code>aprs_map.csv</code></td><td>Optional DMR-ID to callsign mapping file used by APRS enrichment when configured through <code>[APRS] IdMap</code></td></tr>
 <tr><td><code>talkgroup.dat</code></td><td>Preloaded talkgroups; the server exits at startup if this file is missing</td></tr>
 <tr><td><code>banned.dat</code></td><td>Blocked radio IDs loaded at runtime; the server exits at startup if this file is missing</td></tr>
 <tr><td><code>www/index.html</code>, <code>monitor.html</code>, <code>openbridge.html</code></td><td>Main dashboard, raw <code>/STAT</code> monitor, and OpenBridge status pages</td></tr>
+<tr><td><code>www/hotspot.html</code></td><td>Live hotspot/static-talkgroup page driven by <code>/api/systemstg</code> with per-hotspot TS1/TS2 visibility</td></tr>
+<tr><td><code>www/map.html</code></td><td>Leaflet-based APRS/hotspot map page driven by <code>/api/aprs</code>, with search, pagination, and merged APRS/hotspot markers</td></tr>
 <tr><td><code>www/dvmanager.html</code> + <code>dvmanager.js</code></td><td>Browser-only DMR contact exporter and APRS passcode tool using public datasets</td></tr>
 <tr><td><code>www/register.html</code> + <code>profile.html</code></td><td>Self-service account registration and authenticated profile editing pages</td></tr>
 <tr><td><code>www/app.js</code> + <code>styles.css</code></td><td>Shared front-end runtime: theme toggle, auth token persistence, polling, rendering helpers, and unified styling</td></tr>
@@ -379,7 +385,7 @@ content\server.exe</code></pre>
 <table>
 <tr><th>Key</th><th>Description</th><th>Default</th></tr>
 <tr><td>Auth</td><td>CSV auth database path</td><td><code>auth_users.csv</code></td></tr>
-<tr><td>DMRIds</td><td>DMR-ID profile database used by web registration/profile and monitor enrichment</td><td><code>DMRIds.dat</code></td></tr>
+<tr><td>DMRIds</td><td>DMR-ID profile database used by web registration/profile and monitor enrichment</td><td><code>DMRIds.dat</code> (the bundled sample config points to <code>www/DMRIds.dat</code>)</td></tr>
 <tr><td>Log</td><td>SQLite log database path</td><td><code>log.sqlite</code></td></tr>
 <tr><td>Talkgroup</td><td>Talkgroup preload file</td><td><code>talkgroup.dat</code></td></tr>
 <tr><td>Banned</td><td>Blocked radio ID list</td><td><code>banned.dat</code></td></tr>
@@ -457,7 +463,7 @@ content\server.exe</code></pre>
 <tr><td>Filter</td><td>Server-side APRS filter string</td><td>Falls back to <code>m/0</code> on connect when empty</td></tr>
 <tr><td>Keepalive</td><td>Keepalive cadence in seconds</td><td>Config-driven</td></tr>
 <tr><td>Reconnect</td><td>Reconnect cadence in seconds</td><td>Config-driven</td></tr>
-<tr><td>IdMap</td><td>DMRID-to-callsign CSV map</td><td>Optional</td></tr>
+<tr><td>IdMap</td><td>DMRID-to-callsign CSV map used for APRS display enrichment and name lookups</td><td>Optional; the bundled example uses <code>aprs_map.csv</code></td></tr>
 </table>
 <h3>[SMS]</h3>
 <table>
@@ -525,7 +531,7 @@ content\server.exe</code></pre>
 <tr><th>Type</th><th>Magic</th><th>Size</th><th>Key Fields</th><th>Description</th></tr>
 <tr><td>Login</td><td><code>"RPTL"</code></td><td>8</td><td>NodeID</td><td>Node requests login; server replies <code>RPTACK</code> + salt</td></tr>
 <tr><td>Auth</td><td><code>"RPTK"</code></td><td>40</td><td>NodeID, SHA256(salt||pass)</td><td>Client sends auth response; server replies <code>RPTACK</code> or <code>MSTNAK</code></td></tr>
-<tr><td>Config</td><td><code>"RPTC"</code>/<code>"RPTO"</code></td><td>≥12</td><td>NodeID, INI-like payload</td><td>Applies static TGs: <code>TS1=</code>, <code>TS2=</code> (CSV)</td></tr>
+<tr><td>Config</td><td><code>"RPTC"</code>/<code>"RPTO"</code></td><td>≥12</td><td>NodeID, INI-like payload</td><td>Applies static TGs via <code>TS1=</code>/<code>TS2=</code> (CSV) and may also carry hotspot coordinates via <code>LAT</code>/<code>LATITUDE</code> plus <code>LON</code>/<code>LNG</code>/<code>LONG</code>/<code>LONGITUDE</code></td></tr>
 <tr><td>Ping</td><td><code>"RPTPING"</code></td><td>11</td><td>NodeID</td><td>Pong with <code>"MSTPONG"</code> + NodeID</td></tr>
 <tr><td>Ping2</td><td><code>"FMRPING"</code></td><td>11</td><td>—</td><td>Compatibility pong <code>"FMRPONG"</code></td></tr>
 <tr><td>Logout</td><td><code>"RPTCL"</code></td><td>9</td><td>NodeID</td><td>Node disconnect</td></tr>
@@ -544,7 +550,7 @@ content\server.exe</code></pre>
 <ol>
 <li><strong>Login:</strong> <code>RPTL</code> → <code>RPTACK</code>(salt)</li>
 <li><strong>Auth:</strong> <code>RPTK</code>(SHA256(salt||pass)) → <code>RPTACK</code> or <code>MSTNAK</code></li>
-<li><strong>Config:</strong> <code>RPTC/RPTO</code> sets static TGs for TS1/TS2</li>
+<li><strong>Config:</strong> <code>RPTC/RPTO</code> sets static TGs for TS1/TS2 and can also publish hotspot coordinates</li>
 <li><strong>Traffic:</strong> <code>DMRD</code> frames → routed to all subscribers of the talkgroup (owner slot arbitration)</li>
 <li><strong>Keepalive:</strong> <code>RPTPING</code> ↔ <code>MSTPONG</code></li>
 <li><strong>Logout:</strong> <code>RPTCL</code></li>
@@ -556,6 +562,7 @@ content\server.exe</code></pre>
 <li><strong>Time thread</strong> (<code>time_thread_proc</code>): increments <code>g_tick</code> every 50ms and <code>g_sec</code> each second.</li>
 <li><strong>RX worker pool</strong> (<code>start_rx_workers</code>, optional): when <code>[Server] WorkerThreads &gt; 1</code>, 55-byte <code>DMRD</code> frames are sharded by stream ID (or node ID fallback) onto a fixed worker queue so related traffic stays on the same worker.</li>
 <li><strong>Main loop</strong>: <code>select()</code> watches the primary UDP socket plus configured uplink/OpenBridge sockets; non-worker traffic is processed inline under the shared state lock.</li>
+<li><strong>HTTP/UI data prep</strong>: APRS position caches and hotspot snapshots are reused by <code>/api/aprs</code> and <code>/api/systemstg</code> so the bundled map and hotspot pages can render live state without touching the SQLite log path.</li>
 <li><strong>Parrot playback</strong> (<code>parrot_playback_thread_proc</code>): replays buffered frames at roughly 20ms pacing after the end of a Parrot stream.</li>
 <li><strong>Housekeeping</strong>: APRS reconnect/keepalive, SMS buffer expiry/emission, auth reload checks, and stale SQLite active-row cleanup run in the main runtime loop.</li>
 </ul>
@@ -563,7 +570,7 @@ content\server.exe</code></pre>
 <section class="card" id="datastructs">
 <h2>Core Data Structures</h2>
 <ul>
-<li><code>struct node</code>: nodeid, dmrid, salt, sockaddr, hitsec, slots[2], auth flag, timer, static TGs</li>
+<li><code>struct node</code>: nodeid, dmrid, salt, sockaddr, hitsec, slots[2], auth flag, timer, static TGs, and optional hotspot latitude/longitude</li>
 <li><code>struct slot</code>: back-ref node, slotid, current tg, parrot buffer/seq/timestamps, optional SMS buffer</li>
 <li><code>struct talkgroup</code>: tg number, ownerslot, tick, linked-list subscribers</li>
 <li><code>class memfile</code>: in-memory expanding buffer (Read/Write/Seek)</li>
@@ -699,7 +706,7 @@ ResolveInterval=600</code></pre>
 </section>
 <section class="card" id="dvmanager">
 <h2>DV Manager &amp; Browser Tools</h2>
-<p>The packaged <code>www</code> folder now includes a browser-side utility page at <code>dvmanager.html</code>. It is separate from the server JSON API: the page downloads public contact datasets directly from the browser, lets you filter records by country or undefined country, and exports device-specific CSV/TXT contact files without writing anything back to the server.</p>
+<p>The packaged <code>www</code> folder now includes a browser-side utility page at <code>dvmanager.html</code>, alongside the newer <code>hotspot.html</code> and <code>map.html</code> monitoring pages. It is separate from the server JSON API: the page downloads public contact datasets directly from the browser, lets you filter records by country or undefined country, and exports device-specific CSV/TXT contact files without writing anything back to the server.</p>
 <div class="grid">
 <div class="col-6">
 <h3>Included browser tools</h3>
@@ -714,13 +721,39 @@ ResolveInterval=600</code></pre>
 <h3>Front-end runtime additions</h3>
 <ul>
 <li><code>app.js</code> centralizes theme persistence, auth token storage, polling, and page rendering helpers</li>
-<li><code>styles.css</code> provides the shared modern dashboard layout, cards, tables, chips, and light/dark themes</li>
+<li><code>styles.css</code> provides the shared modern dashboard layout, cards, tables, chips, map styling, and light/dark themes</li>
 <li>The Login/Profile flow uses <code>localStorage</code> for browser persistence and sends the token in <code>X-Auth-Token</code> unless a header is already supplied</li>
-<li>Dashboard, Monitor, OpenBridge, Register, and Profile all auto-refresh about every 3 seconds</li>
+<li><code>app.js</code> also adds pagination for hotspot/APRS tables, callsign search for the map table, and Leaflet marker rendering for merged APRS/hotspot positions</li>
+<li>Dashboard, Monitor, OpenBridge, Hotspot, Map, Register, and Profile all auto-refresh about every 3 seconds</li>
 </ul>
 </div>
 </div>
 <div class="callout warn"><strong>Important:</strong> DV Manager depends on the browser being able to reach the public JSON sources. It does not consume <code>/api/log</code>, <code>/api/active</code>, or other embedded monitor endpoints.</div>
+</section>
+<section class="card" id="aprsmap">
+<h2>Hotspot &amp; APRS Map</h2>
+<p>Current builds bundle two additional monitoring pages on top of the dashboard/monitor/OpenBridge views. <code>hotspot.html</code> focuses on static talkgroup announcements received from repeater config frames, while <code>map.html</code> merges APRS station positions with hotspot coordinates learned from <code>RPTC</code>/<code>RPTO</code> payloads.</p>
+<div class="grid">
+<div class="col-6">
+<h3><code>hotspot.html</code></h3>
+<ul>
+<li>Backed by <code>/api/systemstg</code></li>
+<li>Shows DMR ID, callsign, node ID, auth state, current TS1/TS2, configured static TS1/TS2 CSVs, and last-seen age</li>
+<li>Includes summary metrics for hotspot count, unique static TGs, and total TS1/TS2 assignments</li>
+<li>Paginates large hotspot lists in the browser via <code>app.js</code></li>
+</ul>
+</div>
+<div class="col-6">
+<h3><code>map.html</code></h3>
+<ul>
+<li>Backed by <code>/api/aprs</code> and rendered with Leaflet plus OpenStreetMap tiles</li>
+<li>Merges APRS station packets with hotspot coordinates so both can appear on the same map</li>
+<li>Provides callsign/DMR-ID/node search, page navigation, popup details, and map centering from the results table</li>
+<li>Exposes APRS station count, hotspot count, total markers, and latest-seen summary cards</li>
+</ul>
+</div>
+</div>
+<div class="callout"><strong>Hotspot coordinates:</strong> when a repeater sends <code>RPTC</code>/<code>RPTO</code>, the server now accepts <code>LAT</code>/<code>LATITUDE</code> and <code>LON</code>/<code>LNG</code>/<code>LONG</code>/<code>LONGITUDE</code> fields in addition to <code>TS1</code>/<code>TS2</code>. Those coordinates are surfaced through <code>/api/aprs</code> and used by <code>map.html</code>.</div>
 </section>
 <section class="card" id="webmon">
 <h2>Web Monitor &amp; API</h2>
@@ -730,6 +763,8 @@ ResolveInterval=600</code></pre>
 <li><code>index.html</code>: dashboard with active calls, recent log data, summary metrics, and local/APRS/SMS/OpenBridge badges</li>
 <li><code>monitor.html</code>: parsed table view of <code>/api/stat</code> plus collapsible raw <code>/STAT</code> output</li>
 <li><code>openbridge.html</code>: OpenBridge peer health, status, timers, filters, and enhanced/HBLink indicators</li>
+<li><code>hotspot.html</code>: hotspot/static-talkgroup table with TS1/TS2 metrics and per-node visibility from <code>/api/systemstg</code></li>
+<li><code>map.html</code>: Leaflet APRS/hotspot map with merged positions from <code>/api/aprs</code></li>
 <li><code>dvmanager.html</code>: browser-side contact export and APRS passcode tool</li>
 <li><code>register.html</code>: self-service account registration</li>
 <li><code>profile.html</code>: authenticated profile and password update page</li>
@@ -742,7 +777,7 @@ ResolveInterval=600</code></pre>
 <tr><td><code>/api/logout</code></td><td>POST</td><td>Invalidates the current session token</td></tr>
 <tr><td><code>/api/profile</code></td><td>GET / POST</td><td>GET returns the current profile for the authenticated token; POST updates <code>name</code> and/or password using <code>currentPassword</code> and <code>newPassword</code></td></tr>
 <tr><td><code>/api/register</code></td><td>POST</td><td>Creates a new auth + DMRIds entry from <code>dmrid</code>, <code>callsign</code>, <code>name</code>, and <code>password</code> when auth is enabled</td></tr>
-<tr><td><code>/api/active</code></td><td>GET</td><td>Current active transmissions derived from SQLite state, limited by <code>[SQLite] ActiveListLimit</code>; rows include callsign/TG metadata plus <code>src</code>, APRS, and SMS markers</td></tr><tr><td><code>/api/systemstg</code></td><td>GET</td><td>Lists authenticated nodes that currently have static TS1/TS2 subscriptions, including node ID, DMR-ID, callsign/name, last-seen age, current slot TGs, and configured static CSVs</td></tr>
+<tr><td><code>/api/active</code></td><td>GET</td><td>Current active transmissions derived from SQLite state, limited by <code>[SQLite] ActiveListLimit</code>; rows include callsign/TG metadata plus <code>src</code>, APRS, and SMS markers</td></tr><tr><td><code>/api/aprs</code></td><td>GET</td><td>Returns a merged list of APRS stations and hotspot markers. APRS entries include callsign/display, symbol/comment, latitude/longitude, last-seen age, and DMR ID; hotspot entries include DMR ID, node ID, IP, auth state, current TS1/TS2, and configured static TG CSVs when coordinates are available</td></tr><tr><td><code>/api/systemstg</code></td><td>GET</td><td>Lists nodes/hotspots that currently have static TS1/TS2 subscriptions, including node ID, DMR-ID, callsign/name, auth state, last-seen age, current slot TGs, and configured static CSVs</td></tr>
 <tr><td><code>/api/log?limit=20</code></td><td>GET</td><td>Recent activity from the log database; <code>limit</code> accepts <code>1..500</code> and <code>mode=tg</code> (default), <code>mode=user</code>, or <code>mode=raw</code> control grouping. Responses include callsign, TG name/country, <code>src</code>, APRS/SMS flags, and online state</td></tr>
 <tr><td><code>/api/openbridge</code></td><td>GET</td><td>OpenBridge-class peer health, alias, remote target, resolved IP, timing data, filtering, and status; in <code>USE_UPLINK</code> builds this includes only peers whose protocol is <code>openbridge</code></td></tr>
 <tr><td><code>/api/stat</code></td><td>GET</td><td>Proxies the local <code>/STAT</code> UDP output for browser display</td></tr>
@@ -769,10 +804,12 @@ echo "/STAT" | nc -u 127.0.0.1 62031
 http://127.0.0.1:8080/
 http://127.0.0.1:8080/monitor.html
 http://127.0.0.1:8080/openbridge.html
+http://127.0.0.1:8080/hotspot.html
+http://127.0.0.1:8080/map.html
 http://127.0.0.1:8080/dvmanager.html
 http://127.0.0.1:8080/register.html
 http://127.0.0.1:8080/profile.html</code></pre>
-<p>On startup the server loads <code>talkgroup.dat</code> and <code>banned.dat</code>, normalizes the SQLite schema when logging is enabled (including <code>SRC</code>/<code>SEQ</code> migration, index creation, and resetting stale <code>ACTIVE</code>/<code>CONNECT</code> flags), then opens the main UDP socket plus any configured uplink/OpenBridge sockets. When <code>WorkerThreads</code> is greater than <code>1</code>, the receive worker pool is started before entering the main event loop. The bundled front-end polls the main JSON endpoints roughly every 3 seconds and persists theme/login state in <code>localStorage</code>.</p>
+<p>On startup the server loads <code>talkgroup.dat</code> and <code>banned.dat</code>, normalizes the SQLite schema when logging is enabled (including <code>SRC</code>/<code>SEQ</code> migration, index creation, and resetting stale <code>ACTIVE</code>/<code>CONNECT</code> flags), then opens the main UDP socket plus any configured uplink/OpenBridge sockets. When <code>WorkerThreads</code> is greater than <code>1</code>, the receive worker pool is started before entering the main event loop. The bundled front-end polls the main JSON endpoints roughly every 3 seconds, persists theme/login state in <code>localStorage</code>, and now also drives hotspot/APRS pagination plus live map rendering through <code>/api/systemstg</code> and <code>/api/aprs</code>.</p>
 </section>
 <section class="card" id="logging">
 <h2>Logging</h2>
@@ -790,7 +827,7 @@ http://127.0.0.1:8080/profile.html</code></pre>
 </details>
 <details>
 <summary>What does the embedded web server need?</summary>
-<p>Build with <code>HAVE_HTTPMODE</code>, set <code>[Monitor] Enable=1</code>, and make sure the configured <code>Root</code> directory contains the bundled <code>index.html</code>, <code>monitor.html</code>, <code>openbridge.html</code>, <code>dvmanager.html</code>, <code>app.js</code>, and <code>styles.css</code> assets.</p>
+<p>Build with <code>HAVE_HTTPMODE</code>, set <code>[Monitor] Enable=1</code>, and make sure the configured <code>Root</code> directory contains the bundled <code>index.html</code>, <code>monitor.html</code>, <code>openbridge.html</code>, <code>hotspot.html</code>, <code>map.html</code>, <code>dvmanager.html</code>, <code>app.js</code>, and <code>styles.css</code> assets. The map page additionally expects browser access to Leaflet/OpenStreetMap tile resources.</p>
 </details>
 <details>
 <summary>How does registration/profile storage work?</summary>
@@ -804,7 +841,15 @@ http://127.0.0.1:8080/profile.html</code></pre>
 <summary>How does Parrot work?</summary>
 <p>On start: create a <code>memfile</code> buffer; on end: spawn a playback thread to echo frames back at roughly 20 ms cadence after a short delay.</p>
 </details>
-<details><summary>Does DV Manager need the server database?</summary><p>No. <code>dvmanager.html</code> downloads public JSON datasets directly in the browser and exports files locally. It is packaged with openDMR for convenience, but it is not backed by the embedded SQLite log or the monitor JSON API.</p></details></section>
+<details><summary>Does DV Manager need the server database?</summary><p>No. <code>dvmanager.html</code> downloads public JSON datasets directly in the browser and exports files locally. It is packaged with openDMR for convenience, but it is not backed by the embedded SQLite log or the monitor JSON API.</p></details>
+<details>
+<summary>How do the Hotspot and Map pages get their data?</summary>
+<p><code>hotspot.html</code> uses <code>/api/systemstg</code> for live static TS1/TS2 data per node, while <code>map.html</code> uses <code>/api/aprs</code> to merge APRS station positions with hotspot coordinates captured from repeater config frames.</p>
+</details>
+<details>
+<summary>How can a hotspot publish its position?</summary>
+<p>Include coordinates in the repeater config payload using <code>LAT</code> or <code>LATITUDE</code> plus one of <code>LON</code>, <code>LNG</code>, <code>LONG</code>, or <code>LONGITUDE</code>. The server stores those values on the node, surfaces them through <code>/api/aprs</code>, and shows them on <code>map.html</code> when they are valid.</p>
+</details></section>
 <section class="card" id="contrib">
 <h2>Contributing</h2>
 <ol>

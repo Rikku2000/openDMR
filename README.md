@@ -1,24 +1,24 @@
 # openDMR
 
-openDMR is a cross-platform C++ Digital Mobile Radio (DMR) network server/master that links repeaters, routes talkgroups, authenticates nodes, and can optionally provide APRS forwarding, DMR-SMS handling, SQLite logging, parallel DMRD receive workers, OpenBridge peering, a newer optional unified uplink subsystem, and an embedded multi-page web UI.
+openDMR is a cross-platform C++ Digital Mobile Radio (DMR) network server/master for Homebrew-style repeaters and hotspots. It authenticates nodes, routes group and private traffic, supports static TS1/TS2 talkgroup configuration, and can optionally add APRS forwarding, DMR-SMS handling, SQLite activity logging, an embedded HTTP monitor, OpenBridge peering, and a unified uplink subsystem.
 
-This README reflects the current codebase, including the newer HTTP/session APIs in `server.cpp` / `server.h` and the newer browser assets in `content/www`.
+This README reflects the current codebase and packaged web UI, including the newer Hotspot and Map pages, `/api/aprs`, and the current HTTP/session APIs implemented in `server.cpp` and `server.h`.
 
 ## Highlights
 
-- Homebrew-style DMR UDP server with `DMRD`, login/auth, config, ping, and logout handling
-- Talkgroup routing with slot ownership arbitration for preloaded and static-configured talkgroups
-- Static TS1 / TS2 subscriptions from repeater config frames
+- Homebrew-style UDP server for `DMRD`, `RPTL`, `RPTK`, `RPTC`/`RPTO`, `RPTPING`, `FMRPING`, and `RPTCL`
+- SHA-256 challenge/response repeater authentication with CSV-backed per-DMR-ID passwords
+- Talkgroup routing with slot ownership arbitration, scanner TG fan-out, and static TS1/TS2 subscriptions
+- Private-call forwarding to the destination radio’s last-seen slot
 - Parrot / echo talkgroup support (`9990` by default)
-- Optional APRS forwarding (`900999` by default)
-- Optional DMR-SMS buffering and UDP emission to external tools
-- Optional SQLite activity logging for active calls, recent history, online state, and grouped monitor queries
-- Optional parallel DMRD receive workers via `WorkerThreads` (1..32), with stream/node sharding to preserve packet affinity
-- Embedded HTTP monitor with static asset serving and JSON/text endpoints
-- Web registration, login, logout, session refresh, and profile editing
-- OpenBridge peer support with filtering, alias names, hostname re-resolution, and optional enhanced/HMAC framing
-- Optional unified uplink support (`USE_UPLINK`) for `Uplink1..8` plus `OpenBridge1..3` sections
-- Browser-side DV Manager for contact export and APRS passcode generation
+- Optional APRS heard forwarding and APRS-IS position ingestion
+- Optional DMR-SMS buffering with UDP export to external tools
+- Optional SQLite logging for recent activity, active calls, and online-state views
+- Optional parallel DMRD receive workers via `WorkerThreads` (`1..32`)
+- Embedded multi-page HTTP monitor with static asset serving and JSON/text APIs
+- Web registration, login, logout, and profile editing with in-memory session tokens
+- Classic OpenBridge peering plus optional unified uplinks via `USE_UPLINK`
+- Browser-side DV Manager, Hotspot, and Map tools in `content/www`
 - Linux and Windows / MinGW support
 
 ## Repository layout
@@ -26,18 +26,23 @@ This README reflects the current codebase, including the newer HTTP/session APIs
 ```text
 .
 ├── server.cpp              # main server implementation
-├── server.h                # public declarations, protocol structs, monitor hooks
+├── server.h                # declarations, monitor hooks, helpers
 ├── readme.html             # full HTML documentation
+├── README.md               # this GitHub README
 ├── content/
 │   ├── dmr.conf            # runtime configuration
 │   ├── auth_users.csv      # auth + web login credential store
+│   ├── aprs_map.csv        # optional APRS DMR-ID to callsign map
 │   ├── talkgroup.dat       # talkgroup names / aliases
 │   ├── banned.dat          # blocked radio IDs
-│   ├── log.sqlite          # SQLite log database (if enabled)
+│   ├── log.sqlite          # SQLite log database when enabled
+│   ├── server.exe          # Windows build artifact in packaged bundle
 │   └── www/
 │       ├── index.html      # dashboard
 │       ├── monitor.html    # /STAT monitor view
 │       ├── openbridge.html # OpenBridge status page
+│       ├── hotspot.html    # hotspot static TG overview
+│       ├── map.html        # APRS + hotspot map page
 │       ├── dvmanager.html  # contact export / APRS passcode tool
 │       ├── register.html   # self-service registration
 │       ├── profile.html    # authenticated profile editor
@@ -54,25 +59,29 @@ This README reflects the current codebase, including the newer HTTP/session APIs
 ### Core DMR server
 
 - UDP packet handling for login, authentication, config, keepalive, traffic, and logout frames
-- Talkgroup routing for entries loaded from `talkgroup.dat` and static `TS1` / `TS2` repeater config payloads
+- Talkgroup routing for entries loaded from `talkgroup.dat`
+- Static `TS1` / `TS2` subscriptions parsed from repeater config payloads (`RPTC` / `RPTO`)
 - Slot ownership / anti-collision logic per talkgroup
 - Scanner TG fan-out (`777` by default)
-- Private-call routing when the destination radio is known
+- Private-call forwarding when the destination radio is known
 - Global unsubscribe control TG (`4000`)
-- Optional parallel receive workers for `DMRD` traffic, sharded by stream ID (or node ID fallback) when `WorkerThreads > 1`
+- Optional parallel receive workers for `DMRD` traffic, sharded by stream ID or node ID fallback when `WorkerThreads > 1`
 
 ### Authentication
 
 - SHA-256 challenge/response repeater authentication
 - CSV-backed DMR-ID/password authentication
-- Auth reload timer from config
-- Unknown node policy control
+- Configurable auth reload timer
+- Configurable unknown-node policy
+- Web login, logout, registration, and profile editing when auth is enabled
 
 ### APRS (optional)
 
-- Heard reporting via APRS-IS
+- Heard reporting via the APRS trigger talkgroup (`900999` by default)
+- APRS-IS client with keepalive and reconnect handling
 - DMR-ID to callsign mapping via `aprs_map.csv`
-- Configurable APRS keepalive and reconnect timers
+- `/api/aprs` JSON endpoint for live APRS station positions
+- Hotspot location export when repeaters include `LAT` / `LON` style fields in `RPTC` config payloads
 
 ### SMS (optional)
 
@@ -84,15 +93,15 @@ This README reflects the current codebase, including the newer HTTP/session APIs
 ### Logging (optional)
 
 - SQLite `LOG` table support with `SRC` and `SEQ` columns in current builds
-- Recent activity / active call / online-state views for the dashboard
+- Recent activity, active call, and online-state views for the dashboard
 - `/api/log` grouping modes for recent activity by talkgroup, by user, or raw rows
-- Callsign enrichment from the DMR ID data file for UI output
+- Callsign enrichment from the configured DMR ID data file for UI output
 
 ### Embedded web monitor
 
 - Static file serving from the configured document root
 - In-process HTTP listener with explicit client limits and socket timeouts
-- JSON/text APIs for config, login, profile, logs, active traffic, static TS1/TS2 visibility, OpenBridge status, and raw `/STAT`
+- JSON/text APIs for config, login, profile, registration, logs, active traffic, hotspot/static TG visibility, APRS positions, OpenBridge status, and raw `/STAT`
 - Session-token authentication for protected actions
 
 ### Browser UI in `content/www`
@@ -100,6 +109,8 @@ This README reflects the current codebase, including the newer HTTP/session APIs
 - Dashboard page
 - Monitor page
 - OpenBridge page
+- Hotspot page
+- Map page
 - Register page
 - Profile page
 - DV Manager page
@@ -107,14 +118,16 @@ This README reflects the current codebase, including the newer HTTP/session APIs
 
 ## Quick start
 
-### Linux (full-feature build)
+### Linux (full-feature build with unified uplinks)
 
 ```bash
-make
+g++ server.cpp -o server \
+  -DUSE_SQLITE3 -DUSE_OPENSSL -DHAVE_APRS -DHAVE_SMS -DHAVE_HTTPMODE -DUSE_UPLINK \
+  -lsqlite3 -lcrypto -lssl -lpthread
 ./server
 ```
 
-### Linux (manual build)
+### Linux (classic build without `USE_UPLINK`)
 
 ```bash
 g++ server.cpp -o server \
@@ -129,6 +142,8 @@ g++ server.cpp -o server \
 build_mingw.bat
 content\server.exe
 ```
+
+> Run the binary from the runtime directory that contains `dmr.conf`, `talkgroup.dat`, and `banned.dat`. When auth is enabled, `auth_users.csv` and the configured `DMRIds.dat` path are also required.
 
 ## Build notes
 
@@ -170,9 +185,17 @@ g++ -O2 -std=c++17 server.cpp -o dmr \
   -lsqlite3 -lcrypto -lssl -lpthread
 ```
 
+With unified uplinks:
+
+```bash
+g++ -O2 -std=c++17 server.cpp -o dmr \
+  -DUSE_SQLITE3 -DUSE_OPENSSL -DHAVE_APRS -DHAVE_SMS -DHAVE_HTTPMODE -DUSE_UPLINK \
+  -lsqlite3 -lcrypto -lssl -lpthread
+```
+
 ## Runtime layout
 
-The shipped package is designed to run from the `content/` directory. The embedded HTTP server expects the configured document root to contain the web assets.
+The packaged bundle is designed to run from the `content/` directory. The embedded HTTP server expects the configured document root to contain the web assets.
 
 Typical runtime files:
 
@@ -180,6 +203,7 @@ Typical runtime files:
 - `auth_users.csv`
 - `talkgroup.dat`
 - `banned.dat`
+- `aprs_map.csv`
 - `log.sqlite` (optional)
 - `www/DMRIds.dat`
 - `www/*.html`, `app.js`, `styles.css`, `dvmanager.js`
@@ -230,33 +254,33 @@ openDMR uses an INI-style `dmr.conf`.
 
 - `Enable` — enable login/registration/profile flows
 - `Reload` — auth CSV reload interval
-- `UnknownPolicy` — unknown-node policy
+- `UnknownPolicy` — unknown-node policy (`1` = use global password, `0` = deny)
 
 ### `[SQLite]`
 
 Available when compiled with `USE_SQLITE3`:
 
-- `MaxRows` — maximum retained rows in the rolling `LOG` table window
+- `MaxRows` — maximum retained rows in the rolling `LOG` window
 - `ActiveListLimit` — maximum rows returned by `GET /api/active`
 - `ActiveTimeout` — stale-active timeout in seconds before the server closes lingering active rows
 
 ### `[OpenBridge1]` … `[OpenBridge3]`
 
-Without `USE_UPLINK`, the classic OpenBridge loader reads up to three peers. The current code looks for keys including:
+Without `USE_UPLINK`, the classic OpenBridge loader reads up to three peers. Common keys include:
 
 - `Enable`
-- `LocalPort`
+- `AliasName`
+- `Port` / `LocalPort`
 - `TargetHost`
 - `TargetPort`
-- `AliasName`
 - `NetworkId`
 - `Passphrase`
 - `ForceSlot1`
 - `PermitAll`
 - `PermitTGs`
 - `EnhancedOBP`
-- `RelaxChecks`
 - `HBLinkCompat`
+- `RelaxChecks`
 - `ResolveInterval`
 
 With `USE_UPLINK`, those same `OpenBridge1..3` sections are folded into the newer unified uplink loader.
@@ -303,6 +327,15 @@ When compiled with `USE_UPLINK`, the server also supports general uplink section
 - `MaxFrames`
 - `MaxSeconds`
 
+### Hotspot location fields from `RPTC`
+
+The current code also parses hotspot location values from repeater config payloads. It accepts these keys case-insensitively:
+
+- `LAT` or `LATITUDE`
+- `LON`, `LONG`, or `LONGITUDE`
+
+When present and valid, those values are exposed through `/api/aprs` and shown on `map.html` as hotspot markers.
+
 ### Packaged sample config
 
 The bundled `content/dmr.conf` currently ships with these notable defaults:
@@ -313,6 +346,7 @@ Host=0.0.0.0
 Port=62031
 Password=passw0rd
 Housekeeping=1
+WorkerThreads=4
 
 [Monitor]
 Enable=1
@@ -337,7 +371,7 @@ Reload=60
 UnknownPolicy=0
 ```
 
-If those keys are omitted, the current code defaults are `WorkerThreads=1`, `[SQLite] MaxRows=20`, `[SQLite] ActiveListLimit=5`, and `[SQLite] ActiveTimeout=8`.
+If those keys are omitted, the current code defaults include `WorkerThreads=1`, `[SQLite] MaxRows=20`, `[SQLite] ActiveListLimit=5`, and `[SQLite] ActiveTimeout=8`.
 
 ## Defaults and constants
 
@@ -412,7 +446,7 @@ The current implementation handles:
 
 ### Private calls
 
-If the target radio ID is known in the server index, frames can be forwarded directly to that radio’s last-seen slot.
+If the target radio ID is known to the server index, frames can be forwarded directly to that radio’s last-seen slot.
 
 ### Parrot
 
@@ -454,19 +488,21 @@ void monitor_stop(void);
 
 These hooks are used by the embedded monitor to tag recent events by source and to serve the browser UI.
 
-## OpenBridge
+## OpenBridge and uplinks
 
 The current code supports multiple OpenBridge peers with per-peer state. When built with `USE_UPLINK`, OpenBridge peers are managed through the unified uplink subsystem, but the runtime behavior and `/api/openbridge` view still focus on OpenBridge-protocol peers.
 
 Capabilities include:
 
-- up to 3 configured peers
+- up to 3 configured OpenBridge peers in classic mode
 - alias names for UI display
-- hostname resolution and re-resolution
+- hostname resolution and periodic re-resolution
 - TG filtering via `PermitAll` / `PermitTGs`
-- enhanced mode flag for HMAC-aware operation
+- optional enhanced mode for HMAC-aware operation
 - relaxed packet checks for interoperability testing
 - per-peer last RX / TX / ping timing exposed in the UI
+- up to 8 additional generic uplinks with Homebrew or OpenBridge transport when `USE_UPLINK` is enabled
+- Homebrew uplinks that can perform upstream login/auth/ping and push upstream `StaticTS1` / `StaticTS2` values
 
 The `/api/openbridge` endpoint returns peer records with fields such as:
 
@@ -492,6 +528,8 @@ When built with `HAVE_HTTPMODE` and enabled in config, the server serves static 
 - `/` or `/index.html` — dashboard
 - `/monitor.html` — parsed and raw `/STAT` view
 - `/openbridge.html` — OpenBridge health page
+- `/hotspot.html` — hotspot static talkgroup dashboard sourced from `/api/systemstg`
+- `/map.html` — merged APRS station and hotspot map sourced from `/api/aprs`
 - `/dvmanager.html` — browser-side contact export + APRS passcode tool
 - `/register.html` — registration page
 - `/profile.html` — authenticated profile page
@@ -552,6 +590,15 @@ Returns active transmissions from SQLite when logging is enabled, limited by `[S
 
 Lists authenticated nodes that currently have static `TS1` / `TS2` subscriptions, including node ID, DMR-ID, callsign/name, last-seen age, current slot talkgroups, and configured static CSVs.
 
+#### `GET /api/aprs`
+
+Returns merged position data for:
+
+- APRS stations received from APRS-IS
+- hotspots that reported valid location fields in their config payloads
+
+Hotspot rows include node ID, DMR ID, auth state, current TS1/TS2 values, and configured static TG CSVs. This endpoint powers `map.html`.
+
 #### `GET /api/openbridge`
 
 Returns current OpenBridge peer status as JSON.
@@ -574,6 +621,34 @@ X-Auth-Token: <session-token>
 
 The server also accepts the standard `Authorization` header as a fallback. Sessions are stored in memory and refreshed on lookup until expiry.
 
+## Hotspot and Map pages
+
+### Hotspot page
+
+`content/www/hotspot.html` presents hotspot static talkgroup state from `/api/systemstg`, including:
+
+- DMR ID
+- callsign
+- node ID
+- auth state
+- current TS1 / TS2
+- static TS1 / TS2 assignments
+- last-seen age
+
+### Map page
+
+`content/www/map.html` displays merged APRS station and hotspot markers, plus a searchable table with:
+
+- type (`station` or `hotspot`)
+- display / callsign label
+- DMR ID
+- node ID for hotspots
+- latitude / longitude
+- last-seen age
+- marker details
+
+The page uses Leaflet from the public `unpkg` CDN, so browser access to that CDN is required unless you vendor those assets locally.
+
 ## DV Manager
 
 `content/www/dvmanager.html` and `dvmanager.js` add a browser-only utility page that is separate from the server’s own JSON API.
@@ -592,11 +667,10 @@ This page does not need to write back to the server database. It does not depend
 
 The newer shared web assets include:
 
-- `app.js` — shared auth, polling, rendering, theme persistence, and local storage helpers
+- `app.js` — shared auth, polling, rendering, theme persistence, map rendering hooks, and local storage helpers
 - `styles.css` — common dashboard/theme/card/table styling
 - the Login/Profile flow keeps browser state in `localStorage` and sends `X-Auth-Token` unless a header is already supplied
-
-The packaged pages use these shared assets for a consistent multi-page UI, and the dashboard-style pages poll the main monitor endpoints roughly every 3 seconds.
+- dashboard-style pages poll the main monitor endpoints roughly every 3 seconds
 
 ## Running the server
 
@@ -621,6 +695,8 @@ Useful local URLs:
 http://127.0.0.1:8080/
 http://127.0.0.1:8080/monitor.html
 http://127.0.0.1:8080/openbridge.html
+http://127.0.0.1:8080/hotspot.html
+http://127.0.0.1:8080/map.html
 http://127.0.0.1:8080/dvmanager.html
 http://127.0.0.1:8080/register.html
 http://127.0.0.1:8080/profile.html
@@ -669,6 +745,10 @@ On start, the server records frames into an in-memory `memfile`. After end-of-st
 ### Does DV Manager depend on the local server database?
 
 No. It is primarily a browser-side utility that fetches public data and exports files locally for the user.
+
+### Why are hotspot markers missing from the map?
+
+Hotspot markers only appear after a hotspot sends valid location fields in its config payload. The current code accepts `LAT` / `LATITUDE` and `LON` / `LONG` / `LONGITUDE`.
 
 ## Contributing
 
