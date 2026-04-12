@@ -26,6 +26,8 @@ const DATABASES = {
   }
 };
 
+const DV_PREVIEW_PAGE_SIZE = 10;
+
 const DEVICES = [
   { name: 'Ailunce HD1', value: 'HD1' },
   { name: 'Motorola DGP-6150+', value: 'MOTO' },
@@ -52,7 +54,8 @@ const state = {
   selectedCountries: new Set(),
   selectedDevices: new Set(),
   downloadActive: false,
-  exportActive: false
+  exportActive: false,
+  previewPage: 1
 };
 
 function $(id) { return document.getElementById(id); }
@@ -148,6 +151,20 @@ function countDefinedCountries() {
   return state.countries.filter(Boolean).length;
 }
 
+function updatePreviewPagination(totalCount) {
+  const totalPages = Math.max(1, Math.ceil(totalCount / DV_PREVIEW_PAGE_SIZE));
+  if (state.previewPage > totalPages) state.previewPage = totalPages;
+  if (state.previewPage < 1) state.previewPage = 1;
+
+  const prevBtn = $('dv-preview-page-prev');
+  const nextBtn = $('dv-preview-page-next');
+  const label = $('dv-preview-page-label');
+
+  if (prevBtn) prevBtn.disabled = state.previewPage <= 1 || totalCount === 0;
+  if (nextBtn) nextBtn.disabled = state.previewPage >= totalPages || totalCount === 0;
+  if (label) label.textContent = totalCount ? `Page ${state.previewPage} / ${totalPages}` : 'Page 0 / 0';
+}
+
 function populateCountries() {
   const select = $('dv-countries');
   if (!select) return;
@@ -182,6 +199,7 @@ function updatePreview() {
   if (!tbody) return;
   const records = getFilteredRecords();
   tbody.innerHTML = '';
+  updatePreviewPagination(records.length);
 
   if (!records.length) {
     const row = document.createElement('tr');
@@ -195,7 +213,10 @@ function updatePreview() {
   }
 
   const isRepeater = DATABASES[state.databaseKey].type === 'repeaters';
-  records.slice(0, 5).forEach((record) => {
+  const start = (state.previewPage - 1) * DV_PREVIEW_PAGE_SIZE;
+  const pageRecords = records.slice(start, start + DV_PREVIEW_PAGE_SIZE);
+
+  pageRecords.forEach((record) => {
     const row = document.createElement('tr');
     const cells = [
       radioIdFor(record, isRepeater) || '—',
@@ -216,7 +237,8 @@ function updatePreview() {
     tbody.append(row);
   });
 
-  text('dv-preview-meta', `${Math.min(records.length, 5)} of ${records.length} rows shown`);
+  const end = Math.min(start + pageRecords.length, records.length);
+  text('dv-preview-meta', `Showing ${start + 1}-${end} of ${records.length} rows`);
 }
 
 function updateUi() {
@@ -294,6 +316,7 @@ function toCountryBucketArray(records) {
 async function downloadDatabase() {
   const source = DATABASES[state.databaseKey];
   state.downloadActive = true;
+  state.previewPage = 1;
   state.records = [];
   state.countries = [];
   state.selectAll = true;
@@ -495,6 +518,7 @@ async function exportSelectedDevices() {
 }
 
 function handleCountrySelectionChange() {
+  state.previewPage = 1;
   state.selectAll = false;
   $('dv-all').checked = false;
   state.selectedCountries = new Set(optionValues($('dv-countries')));
@@ -502,6 +526,7 @@ function handleCountrySelectionChange() {
 }
 
 function handleAllToggle() {
+  state.previewPage = 1;
   state.selectAll = $('dv-all').checked;
   if (state.selectAll) {
     state.noCountriesOnly = false;
@@ -513,6 +538,7 @@ function handleAllToggle() {
 }
 
 function handleNoCountriesToggle() {
+  state.previewPage = 1;
   state.noCountriesOnly = $('dv-no-countries').checked;
   if (state.noCountriesOnly) {
     state.selectAll = false;
@@ -528,12 +554,36 @@ function handleDeviceSelectionChange() {
   updateUi();
 }
 
+function initPreviewControls() {
+  const prevBtn = $('dv-preview-page-prev');
+  const nextBtn = $('dv-preview-page-next');
+  if ((!prevBtn && !nextBtn) || (prevBtn && prevBtn.dataset.bound === '1')) return;
+
+  if (prevBtn) {
+    prevBtn.dataset.bound = '1';
+    prevBtn.addEventListener('click', () => {
+      state.previewPage -= 1;
+      updatePreview();
+    });
+  }
+
+  if (nextBtn) {
+    nextBtn.dataset.bound = '1';
+    nextBtn.addEventListener('click', () => {
+      state.previewPage += 1;
+      updatePreview();
+    });
+  }
+}
+
 function init() {
   if (!$('dv-database')) return;
   populateDevices();
+  initPreviewControls();
 
   $('dv-database').addEventListener('change', (event) => {
     state.databaseKey = event.target.value;
+    state.previewPage = 1;
     state.records = [];
     state.countries = [];
     state.selectedCountries = new Set();

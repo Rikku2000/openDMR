@@ -84,7 +84,7 @@
         </section>
 
         <section class="content-grid">
-          <article class="panel-card panel-span-2 form-card wide-card">
+          <article class="panel-card form-card wide-card">
             <div class="panel-head">
               <div>
                 <div class="panel-title">Data source and filters</div>
@@ -121,78 +121,86 @@
                 <div id="dv-download-status" class="form-status">Ready.</div>
               </div>
             </div>
+
+            <section class="embedded-section" aria-label="Selection preview">
+              <div class="panel-head panel-head-embedded">
+                <div>
+                  <div class="panel-title">Selection preview</div>
+                  <div class="panel-subtitle">Browse the current export set 10 rows at a time</div>
+                </div>
+                <div class="panel-meta" id="dv-preview-meta">No contacts selected</div>
+              </div>
+
+              <div class="table-pagination" aria-label="Selection preview pagination controls">
+                <button id="dv-preview-page-prev" class="nav-btn" type="button">Previous</button>
+                <span id="dv-preview-page-label" class="chip chip-soft">Page 0 / 0</span>
+                <button id="dv-preview-page-next" class="nav-btn" type="button">Next</button>
+              </div>
+
+              <div class="table-wrap">
+                <table class="table" id="dv-preview-table">
+                  <thead>
+                    <tr>
+                      <th>ID</th>
+                      <th>Callsign</th>
+                      <th>Name</th>
+                      <th>City</th>
+                      <th>State</th>
+                      <th>Country</th>
+                      <th>Remarks</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr><td colspan="7">Download a dataset to preview contacts</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </section>
           </article>
 
-          <article class="panel-card form-card">
-            <div class="panel-head">
-              <div>
-                <div class="panel-title">Export devices</div>
-                <div class="panel-subtitle">Generate radio-ready contact files</div>
+          <div class="side-panel-stack">
+            <article class="panel-card form-card">
+              <div class="panel-head">
+                <div>
+                  <div class="panel-title">Export devices</div>
+                  <div class="panel-subtitle">Generate radio-ready contact files</div>
+                </div>
               </div>
-            </div>
 
-            <label class="field">
-              <span>Devices</span>
-              <select id="dv-devices" class="field-select field-select-multi2" multiple disabled></select>
-            </label>
-
-            <div class="field-actions field-span-2">
-              <button id="dv-export" class="nav-btn submit-btn" type="button" disabled>Export selected devices</button>
-              <div id="dv-export-status" class="form-status">Choose a dataset and at least one device.</div>
-            </div>
-          </article>
-
-          <article class="panel-card form-card">
-            <div class="panel-head">
-              <div>
-                <div class="panel-title">APRS passcode</div>
-                <div class="panel-subtitle">Generate an APRS-IS passcode from a callsign</div>
-              </div>
-            </div>
-
-            <div class="register-form compact-form">
               <label class="field">
-                <span>Callsign</span>
-                <input id="dv-callsign" type="text" maxlength="32" placeholder="Enter your callsign" />
+                <span>Devices</span>
+                <select id="dv-devices" class="field-select field-select-multi2" multiple disabled></select>
               </label>
-              <div class="summary-row">
-                <span>Passcode</span>
-                <strong id="dv-passcode">—</strong>
-              </div>
-              <div class="field-actions">
-                <button id="dv-generate" class="nav-btn submit-btn" type="button">Generate passcode</button>
-              </div>
-            </div>
-          </article>
 
-          <article class="panel-card panel-span-2 wide-card">
-            <div class="panel-head">
-              <div>
-                <div class="panel-title">Selection preview</div>
-                <div class="panel-subtitle">First 5 rows from the current export set</div>
+              <div class="field-actions field-span-2">
+                <button id="dv-export" class="nav-btn submit-btn" type="button" disabled>Export selected devices</button>
+                <div id="dv-export-status" class="form-status">Choose a dataset and at least one device.</div>
               </div>
-              <div class="panel-meta" id="dv-preview-meta">No contacts selected</div>
-            </div>
+            </article>
 
-            <div class="table-wrap">
-              <table class="table" id="dv-preview-table">
-                <thead>
-                  <tr>
-                    <th>ID</th>
-                    <th>Callsign</th>
-                    <th>Name</th>
-                    <th>City</th>
-                    <th>State</th>
-                    <th>Country</th>
-                    <th>Remarks</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr><td colspan="7">Download a dataset to preview contacts</td></tr>
-                </tbody>
-              </table>
-            </div>
-          </article>
+            <article class="panel-card form-card">
+              <div class="panel-head">
+                <div>
+                  <div class="panel-title">APRS passcode</div>
+                  <div class="panel-subtitle">Generate an APRS-IS passcode from a callsign</div>
+                </div>
+              </div>
+
+              <div class="register-form compact-form">
+                <label class="field">
+                  <span>Callsign</span>
+                  <input id="dv-callsign" type="text" maxlength="32" placeholder="Enter your callsign" />
+                </label>
+                <div class="summary-row">
+                  <span>Passcode</span>
+                  <strong id="dv-passcode">—</strong>
+                </div>
+                <div class="field-actions">
+                  <button id="dv-generate" class="nav-btn submit-btn" type="button">Generate passcode</button>
+                </div>
+              </div>
+            </article>
+          </div>
         </section>
       </main>
 
