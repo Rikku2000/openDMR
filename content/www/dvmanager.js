@@ -1,4 +1,4 @@
-import { localizeText, t } from './i18n.js';
+import { localizeText, t } from './app_lang.js';
 
 const DATABASES = {
   'radioid-users': {
