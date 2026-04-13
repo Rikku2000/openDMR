@@ -1,3 +1,5 @@
+import { getLanguage, getLanguageLabel, getLocale, getSupportedLanguages, initLang, localizeText, setLanguage, t } from './app_lang.js';
+
 const THEME_KEY = 'dmr.theme';
 const AUTH_TOKEN_KEY = 'dmr.authToken';
 const AUTH_USER_KEY = 'dmr.authUser';
@@ -130,7 +132,7 @@ async function fetchAprsJSON(url = '/api/aprs') {
 
 function setText(id, value) {
   const el = document.getElementById(id);
-  if (el) el.textContent = value;
+  if (el) el.textContent = localizeText(value);
 }
 
 function setHidden(selector, hidden) {
@@ -151,7 +153,7 @@ function setChipTone(id, tone) {
 function createEl(tag, className, text) {
   const el = document.createElement(tag);
   if (className) el.className = className;
-  if (text != null) el.textContent = text;
+  if (text != null) el.textContent = localizeText(text);
   return el;
 }
 
@@ -180,7 +182,7 @@ function closeLoginModal() {
 function setLoginStatus(message, tone = '') {
   const box = document.getElementById('login-status');
   if (!box) return;
-  box.textContent = message;
+  box.textContent = localizeText(message);
   box.className = 'form-status';
   if (tone === 'ok') box.classList.add('is-ok');
   if (tone === 'warn') box.classList.add('is-warn');
@@ -190,11 +192,81 @@ function setLoginStatus(message, tone = '') {
 function setProfileStatus(message, tone = '') {
   const box = document.getElementById('profile-status');
   if (!box) return;
-  box.textContent = message;
+  box.textContent = localizeText(message);
   box.className = 'form-status';
   if (tone === 'ok') box.classList.add('is-ok');
   if (tone === 'warn') box.classList.add('is-warn');
   if (tone === 'bad') box.classList.add('is-bad');
+}
+
+function syncLanguageUi() {
+  const label = document.getElementById('language-label');
+  const select = document.getElementById('language-select');
+  if (label) label.textContent = t('Language');
+  if (!select) return;
+  select.value = getLanguage();
+  select.setAttribute('aria-label', t('Language'));
+  select.title = t('Language');
+  Array.from(select.options).forEach((option) => {
+    option.textContent = getLanguageLabel(option.value);
+  });
+}
+
+function syncNavbarLanguageUi() {
+  const label = document.getElementById('nav-language-label');
+  const menu = document.getElementById('nav-language-menu');
+
+  if (label) {
+    label.textContent = t('Language');
+  }
+
+  if (!menu) return;
+
+  menu.value = getLanguage();
+  menu.setAttribute('aria-label', t('Language'));
+  menu.title = t('Language');
+
+  Array.from(menu.options).forEach((option) => {
+    option.textContent = getLanguageLabel(option.value);
+  });
+}
+
+function bindNavbarLanguageUi() {
+  const menu = document.getElementById('nav-language-menu');
+  if (!menu || menu.dataset.i18nBound === '1') return;
+
+  menu.dataset.i18nBound = '1';
+
+  if (!menu.options.length) {
+    getSupportedLanguages().forEach((lang) => {
+      const option = document.createElement('option');
+      option.value = lang;
+      option.textContent = getLanguageLabel(lang);
+      menu.append(option);
+    });
+  }
+
+  menu.addEventListener('change', (event) => {
+    setLanguage(event.target.value);
+  });
+}
+
+function placeNavbarLanguageUi() {
+  const nav = document.querySelector('.top-actions');
+  const wrap = document.getElementById('nav-language-switcher');
+  if (!nav || !wrap) return;
+
+  const authSlot = document.getElementById('auth-slot');
+  if (authSlot && authSlot.parentElement === nav) {
+    if (authSlot.nextElementSibling !== wrap) {
+      authSlot.insertAdjacentElement('afterend', wrap);
+    }
+    return;
+  }
+
+  if (nav.lastElementChild !== wrap) {
+    nav.append(wrap);
+  }
 }
 
 function ensureAuthChrome() {
@@ -227,6 +299,9 @@ function ensureAuthChrome() {
   slot.append(logoutBtn);
 
   nav.append(slot);
+
+  const languageSwitcher = document.getElementById('nav-language-switcher');
+  if (languageSwitcher) nav.append(languageSwitcher);
 
   const modal = document.createElement('div');
   modal.id = 'login-modal';
@@ -323,9 +398,13 @@ function syncAuthUi() {
   if (chip) {
     chip.classList.toggle('is-hidden', !loggedIn);
     chip.textContent = loggedIn
-      ? `DMR-ID: ${authState.user.dmrid} (${authState.user.name || 'Callsign'})`
+      ? localizeText(`DMR-ID: ${authState.user.dmrid} (${authState.user.name || 'Callsign'})`)
       : '';
   }
+
+  if (loginBtn) loginBtn.textContent = t('Login');
+  if (profileBtn) profileBtn.textContent = t('Profile');
+  if (logoutBtn) logoutBtn.textContent = t('Logout');
 
   loginBtn?.classList.toggle('is-hidden', loggedIn);
   profileBtn?.classList.toggle('is-hidden', !loggedIn);
@@ -416,7 +495,7 @@ async function loadRuntimeConfig() {
 function setRegisterStatus(message, tone = 'soft') {
   const box = document.getElementById('register-status');
   if (!box) return;
-  box.textContent = message;
+  box.textContent = localizeText(message);
   box.className = 'form-status';
   if (tone === 'ok') box.classList.add('is-ok');
   if (tone === 'bad') box.classList.add('is-bad');
@@ -461,12 +540,12 @@ function initRegistrationForm() {
 
 function renderClock() {
   const now = new Date();
-  setText('clock-time', now.toLocaleTimeString());
-  setText('clock-date', now.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }));
+  setText('clock-time', now.toLocaleTimeString(getLocale()));
+  setText('clock-date', now.toLocaleDateString(getLocale(), { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }));
 }
 
 function updateRefresh() {
-  const time = new Date().toLocaleTimeString();
+  const time = new Date().toLocaleTimeString(getLocale());
   setText('metric-refresh', time);
   setText('metric-refresh-sub', 'Last successful refresh');
   setText('monitor-updated', `Updated ${time}`);
@@ -474,7 +553,7 @@ function updateRefresh() {
 
 function td(text, className = '') {
   const cell = document.createElement('td');
-  cell.textContent = text;
+  cell.textContent = localizeText(text);
   if (className) cell.className = className;
   return cell;
 }
@@ -560,14 +639,14 @@ function statusBadge(status) {
 
 function formatSince(seconds) {
   const sec = Number(seconds || 0);
-  if (!sec) return 'just now';
-  if (sec < 60) return `${sec}s ago`;
+  if (!sec) return localizeText('just now');
+  if (sec < 60) return localizeText(`${sec}s ago`);
   const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m ago`;
+  if (min < 60) return localizeText(`${min}m ago`);
   const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h ago`;
+  if (hr < 24) return localizeText(`${hr}h ago`);
   const day = Math.floor(hr / 24);
-  return `${day}d ago`;
+  return localizeText(`${day}d ago`);
 }
 
 async function renderOpenBridge() {
@@ -582,7 +661,7 @@ async function renderOpenBridge() {
       const tr = document.createElement('tr');
       const cell = document.createElement('td');
       cell.colSpan = 11;
-      cell.textContent = 'No enabled OpenBridge peers configured';
+      cell.textContent = localizeText('No enabled OpenBridge peers configured');
       tr.append(cell);
       tbody.append(tr);
       setText('ob-metric-total', '0');
@@ -639,7 +718,7 @@ async function renderOpenBridge() {
     const tr = document.createElement('tr');
     const cell = document.createElement('td');
     cell.colSpan = 11;
-    cell.textContent = 'Unable to load OpenBridge peers';
+    cell.textContent = localizeText('Unable to load OpenBridge peers');
     tr.append(cell);
     tbody.append(tr);
     setText('ob-table-meta', 'Request failed');
@@ -661,7 +740,7 @@ async function renderActive() {
       const tr = document.createElement('tr');
       const cell = document.createElement('td');
       cell.colSpan = 7;
-      cell.textContent = 'No active transmissions';
+      cell.textContent = localizeText('No active transmissions');
       tr.append(cell);
       tbody.append(tr);
       setText('metric-active', '0');
@@ -716,7 +795,7 @@ async function renderLog() {
       const tr = document.createElement('tr');
       const cell = document.createElement('td');
       cell.colSpan = 10;
-      cell.textContent = 'No recent log entries';
+      cell.textContent = localizeText('No recent log entries');
       tr.append(cell);
       tbody.append(tr);
     } else {
@@ -764,7 +843,7 @@ async function renderLog() {
     const tr = document.createElement('tr');
     const cell = document.createElement('td');
     cell.colSpan = 11;
-    cell.textContent = 'Unable to load recent log';
+    cell.textContent = localizeText('Unable to load recent log');
     tr.append(cell);
     tbody.append(tr);
     updateSummaryRows([]);
@@ -866,7 +945,7 @@ function renderStatTable(parsed) {
     const tr = document.createElement('tr');
     const cell = document.createElement('td');
     cell.colSpan = 9;
-    cell.textContent = 'No connected nodes found in /STAT output';
+    cell.textContent = localizeText('No connected nodes found in /STAT output');
     tr.append(cell);
     tbody.append(tr);
     return;
@@ -893,7 +972,7 @@ async function renderStat() {
 
   try {
     const text = await fetchText('/api/stat');
-    if (statEl) statEl.textContent = text || 'No /STAT reply';
+    if (statEl) statEl.textContent = localizeText(text || 'No /STAT reply');
 
     const parsed = parseStatText(text);
     renderStatTable(parsed);
@@ -907,13 +986,13 @@ async function renderStat() {
       : 'No connected nodes');
   } catch (error) {
     console.error('stat:', error);
-    if (statEl) statEl.textContent = 'No /STAT reply';
+    if (statEl) statEl.textContent = localizeText('No /STAT reply');
     if (tbody) {
       tbody.innerHTML = '';
       const tr = document.createElement('tr');
       const cell = document.createElement('td');
       cell.colSpan = 9;
-      cell.textContent = 'Unable to load /STAT output';
+      cell.textContent = localizeText('Unable to load /STAT output');
       tr.append(cell);
       tbody.append(tr);
     }
@@ -952,7 +1031,7 @@ function updateSystemTgPagination(totalCount) {
 
   if (prevBtn) prevBtn.disabled = systemTgPage <= 1 || totalCount === 0;
   if (nextBtn) nextBtn.disabled = systemTgPage >= totalPages || totalCount === 0;
-  if (label) label.textContent = totalCount ? `Page ${systemTgPage} / ${totalPages}` : 'Page 0 / 0';
+  if (label) label.textContent = localizeText(totalCount ? `Page ${systemTgPage} / ${totalPages}` : 'Page 0 / 0');
 }
 
 function renderSystemTgsTable(data = []) {
@@ -966,7 +1045,7 @@ function renderSystemTgsTable(data = []) {
     const tr = document.createElement('tr');
     const cell = document.createElement('td');
     cell.colSpan = 9;
-    cell.textContent = 'No hotspot static talkgroups reported yet';
+    cell.textContent = localizeText('No hotspot static talkgroups reported yet');
     tr.append(cell);
     tbody.append(tr);
     setText('systemstg-meta', 'No hotspot data');
@@ -1075,7 +1154,7 @@ async function renderSystemTgs() {
     const tr = document.createElement('tr');
     const cell = document.createElement('td');
     cell.colSpan = 9;
-    cell.textContent = 'Unable to load hotspot static talkgroups';
+    cell.textContent = localizeText('Unable to load hotspot static talkgroups');
     tr.append(cell);
     tbody.append(tr);
     updateSystemTgPagination(0);
@@ -1185,7 +1264,7 @@ function updateAprsPagination(totalCount) {
 
   if (prevBtn) prevBtn.disabled = aprsPage <= 1 || totalCount === 0;
   if (nextBtn) nextBtn.disabled = aprsPage >= totalPages || totalCount === 0;
-  if (label) label.textContent = totalCount ? `Page ${aprsPage} / ${totalPages}` : 'Page 0 / 0';
+  if (label) label.textContent = localizeText(totalCount ? `Page ${aprsPage} / ${totalPages}` : 'Page 0 / 0');
 }
 
 function renderAprsTable(filteredRows = getFilteredAprsRows()) {
@@ -1199,7 +1278,7 @@ function renderAprsTable(filteredRows = getFilteredAprsRows()) {
     const tr = document.createElement('tr');
     const cell = document.createElement('td');
     cell.colSpan = 7;
-    cell.textContent = 'No APRS station packets or hotspot locations available yet';
+    cell.textContent = localizeText('No APRS station packets or hotspot locations available yet');
     tr.append(cell);
     tbody.append(tr);
     setText('aprs-table-meta', 'No positions loaded');
@@ -1210,7 +1289,7 @@ function renderAprsTable(filteredRows = getFilteredAprsRows()) {
     const tr = document.createElement('tr');
     const cell = document.createElement('td');
     cell.colSpan = 7;
-    cell.textContent = 'No APRS entries match the current search';
+    cell.textContent = localizeText('No APRS entries match the current search');
     tr.append(cell);
     tbody.append(tr);
     setText('aprs-table-meta', `0 matches for “${aprsSearchQuery}”`);
@@ -1228,7 +1307,7 @@ function renderAprsTable(filteredRows = getFilteredAprsRows()) {
     displayCell.className = 'emphasis';
     const linkBtn = createEl('button', 'callsign-link', getAprsRowLabel(row));
     linkBtn.type = 'button';
-    linkBtn.title = 'Center map on this callsign';
+    linkBtn.title = t('Center map on this callsign');
     linkBtn.addEventListener('click', () => focusAprsRow(row));
     displayCell.append(linkBtn);
     tr.append(displayCell);
@@ -1337,21 +1416,28 @@ function ensureAprsMap() {
 }
 
 function aprsPopupHtml(row) {
-  const title = escapeHtml(row.display || row.callsign || row.name || row.dmrid || 'Unknown');
-  const type = row.kind === 'hotspot' ? 'Hotspot' : 'APRS station';
+  const title = escapeHtml(localizeText(row.display || row.callsign || row.name || row.dmrid || 'Unknown'));
+  const labelType = escapeHtml(t('Type'));
+  const labelCallsign = escapeHtml(t('Callsign'));
+  const labelDmrId = 'DMR ID';
+  const labelNode = escapeHtml(t('Node'));
+  const labelLatLon = escapeHtml(t('Lat/Lon'));
+  const labelLastSeen = escapeHtml(t('Last seen'));
+  const labelDetails = escapeHtml(t('Details'));
+  const type = localizeText(row.kind === 'hotspot' ? 'Hotspot' : 'APRS station');
   const lines = [
     `<div class="map-popup-title">${title}</div>`,
-    `<div class="map-popup-meta"><strong>Type:</strong> ${escapeHtml(type)}</div>`
+    `<div class="map-popup-meta"><strong>${labelType}:</strong> ${escapeHtml(type)}</div>`
   ];
 
-  if (row.callsign) lines.push(`<div class="map-popup-meta"><strong>Callsign:</strong> ${escapeHtml(row.callsign)}</div>`);
-  if (row.dmrid) lines.push(`<div class="map-popup-meta"><strong>DMR ID:</strong> ${escapeHtml(row.dmrid)}</div>`);
-  if (row.node) lines.push(`<div class="map-popup-meta"><strong>Node:</strong> ${escapeHtml(row.node)}</div>`);
-  lines.push(`<div class="map-popup-meta"><strong>Lat/Lon:</strong> ${escapeHtml(formatCoordinate(row.latitude))}, ${escapeHtml(formatCoordinate(row.longitude))}</div>`);
-  lines.push(`<div class="map-popup-meta"><strong>Last seen:</strong> ${escapeHtml(formatSince(row.lastSeenSec))}</div>`);
+  if (row.callsign) lines.push(`<div class="map-popup-meta"><strong>${labelCallsign}:</strong> ${escapeHtml(row.callsign)}</div>`);
+  if (row.dmrid) lines.push(`<div class="map-popup-meta"><strong>${labelDmrId}:</strong> ${escapeHtml(row.dmrid)}</div>`);
+  if (row.node) lines.push(`<div class="map-popup-meta"><strong>${labelNode}:</strong> ${escapeHtml(row.node)}</div>`);
+  lines.push(`<div class="map-popup-meta"><strong>${labelLatLon}:</strong> ${escapeHtml(formatCoordinate(row.latitude))}, ${escapeHtml(formatCoordinate(row.longitude))}</div>`);
+  lines.push(`<div class="map-popup-meta"><strong>${labelLastSeen}:</strong> ${escapeHtml(formatSince(row.lastSeenSec))}</div>`);
 
   const details = aprsDetailText(row);
-  if (details && details !== '—') lines.push(`<div class="map-popup-meta"><strong>Details:</strong> ${escapeHtml(details)}</div>`);
+  if (details && details !== '—') lines.push(`<div class="map-popup-meta"><strong>${labelDetails}:</strong> ${escapeHtml(details)}</div>`);
 
   return lines.join('');
 }
@@ -1418,7 +1504,7 @@ async function renderAprsMap() {
     setText('aprs-summary', rows.length
       ? `${stations.length} APRS station${stations.length === 1 ? '' : 's'} · ${hotspots.length} hotspot${hotspots.length === 1 ? '' : 's'}`
       : 'No APRS stations or hotspot locations yet');
-    setText('aprs-updated', `Updated ${new Date().toLocaleTimeString()}`);
+    setText('aprs-updated', `Updated ${new Date().toLocaleTimeString(getLocale())}`);
     setText('aprs-meta', rows.length ? `${rows.length} marker${rows.length === 1 ? '' : 's'} on map` : 'Map idle');
     setText('aprs-metric-stations', String(stations.length));
     setText('aprs-metric-stations-sub', stations.length
@@ -1441,7 +1527,7 @@ async function renderAprsMap() {
       const tr = document.createElement('tr');
       const cell = document.createElement('td');
       cell.colSpan = 8;
-      cell.textContent = 'Unable to load APRS map data';
+      cell.textContent = localizeText('Unable to load APRS map data');
       tr.append(cell);
       tbody.append(tr);
     }
@@ -1568,6 +1654,20 @@ async function tick() {
   await Promise.allSettled(jobs);
 }
 
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', start, { once: true });
+} else {
+  initLang();
+  bindNavbarLanguageUi();
+  placeNavbarLanguageUi();
+  syncNavbarLanguageUi();
+
+  document.addEventListener('dmr:languagechange', () => {
+    placeNavbarLanguageUi();
+    syncNavbarLanguageUi();
+  });
+}
+
 loadAuthState();
 initThemeToggle();
 ensureAuthChrome();
@@ -1575,6 +1675,20 @@ initRegistrationForm();
 initProfileForm();
 initAprsControls();
 initSystemTgControls();
+
+document.addEventListener('dmr:languagechange', () => {
+  syncLanguageUi();
+  syncAuthUi();
+  renderClock();
+  updateRefresh();
+  renderProfileView();
+  if (page === 'dashboard') { renderActive(); renderLog(); }
+  if (page === 'monitor') renderStat();
+  if (page === 'openbridge') renderOpenBridge();
+  if (page === 'systemstg') renderSystemTgs();
+  if (page === 'maps') renderAprsMap();
+});
+
 renderClock();
 renderProfileView();
 loadRuntimeConfig().then(refreshSession);

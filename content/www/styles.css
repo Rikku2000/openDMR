@@ -597,6 +597,32 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
   .submit-btn { width: 100%; }
 }
 
+
+.lang-slot {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-alt);
+}
+
+.lang-label {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.lang-select {
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-weight: 700;
+  outline: none;
+  cursor: pointer;
+}
+
 .auth-slot {
   display: inline-flex;
   flex-wrap: wrap;
@@ -655,8 +681,13 @@ body.modal-open {
 }
 
 @media (max-width: 820px) {
+  .lang-slot,
   .auth-slot {
     width: 100%;
+  }
+
+  .lang-slot {
+    justify-content: center;
   }
 
   .auth-slot .nav-btn,
@@ -816,4 +847,88 @@ body.modal-open {
 
 .map-popup-meta strong {
   font-weight: 700;
+}
+
+
+.floating-language-switcher {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--surface-strong) 88%, transparent);
+  backdrop-filter: blur(18px) saturate(160%);
+  box-shadow: var(--shadow);
+}
+
+.floating-language-button {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: var(--surface-alt);
+  color: var(--text);
+  padding: 10px 14px;
+  border-radius: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.floating-language-menu {
+  min-width: 110px;
+  border: 1px solid var(--line);
+  background: var(--surface-alt);
+  color: var(--text);
+  padding: 10px 12px;
+  border-radius: 14px;
+  font-weight: 700;
+  outline: none;
+  cursor: pointer;
+}
+
+@media (max-width: 820px) {
+  .floating-language-switcher {
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    justify-content: space-between;
+  }
+
+  .floating-language-button,
+  .floating-language-menu {
+    flex: 1;
+  }
+}
+
+
+.nav-language-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 4px;
+}
+
+.nav-language-label {
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.nav-language-menu {
+  min-width: 108px;
+}
+
+@media (max-width: 820px) {
+  .nav-language-switcher {
+    width: 100%;
+    justify-content: flex-end;
+    margin-left: 0;
+  }
+
+  .nav-language-label {
+    display: none;
+  }
 }

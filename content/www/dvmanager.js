@@ -1,3 +1,5 @@
+import { localizeText, t } from './i18n.js';
+
 const DATABASES = {
   'radioid-users': {
     label: 'Users [DMR-Database]',
@@ -59,13 +61,13 @@ const state = {
 };
 
 function $(id) { return document.getElementById(id); }
-function text(id, value) { const el = $(id); if (el) el.textContent = value; }
+function text(id, value) { const el = $(id); if (el) el.textContent = localizeText(value); }
 function setDisabled(id, disabled) { const el = $(id); if (el) el.disabled = disabled; }
 
 function setStatus(id, message, tone = '') {
   const el = $(id);
   if (!el) return;
-  el.textContent = message;
+  el.textContent = localizeText(message);
   el.className = 'form-status';
   if (tone === 'ok') el.classList.add('is-ok');
   if (tone === 'warn') el.classList.add('is-warn');
@@ -75,7 +77,7 @@ function setStatus(id, message, tone = '') {
 function setChip(id, message, tone = 'soft') {
   const el = $(id);
   if (!el) return;
-  el.textContent = message;
+  el.textContent = localizeText(message);
   el.className = 'chip';
   if (tone === 'soft') el.classList.add('chip-soft');
   if (tone === 'warn') el.classList.add('chip-warn');
@@ -162,24 +164,27 @@ function updatePreviewPagination(totalCount) {
 
   if (prevBtn) prevBtn.disabled = state.previewPage <= 1 || totalCount === 0;
   if (nextBtn) nextBtn.disabled = state.previewPage >= totalPages || totalCount === 0;
-  if (label) label.textContent = totalCount ? `Page ${state.previewPage} / ${totalPages}` : 'Page 0 / 0';
+  if (label) label.textContent = localizeText(totalCount ? `Page ${state.previewPage} / ${totalPages}` : 'Page 0 / 0');
 }
 
 function populateCountries() {
   const select = $('dv-countries');
   if (!select) return;
+  const selectedSnapshot = new Set(state.selectedCountries);
   select.innerHTML = '';
 
   state.countries.forEach((country) => {
     const count = state.records.filter((record) => normalizedCountry(record) === country).length;
     const option = document.createElement('option');
     option.value = country;
-    option.textContent = country ? `${country} (${count})` : `Undefined (${count})`;
-    option.selected = state.selectAll && !state.noCountriesOnly;
+    option.textContent = localizeText(country ? `${country} (${count})` : `Undefined (${count})`);
+    option.selected = state.selectAll ? !state.noCountriesOnly : selectedSnapshot.has(country);
     select.append(option);
   });
 
-  state.selectedCountries = new Set(state.selectAll && !state.noCountriesOnly ? state.countries : []);
+  if (state.selectAll && !state.noCountriesOnly) state.selectedCountries = new Set(state.countries);
+  else if (state.noCountriesOnly) state.selectedCountries = new Set();
+  else state.selectedCountries = selectedSnapshot;
 }
 
 function populateDevices() {
@@ -189,7 +194,8 @@ function populateDevices() {
   DEVICES.forEach((device) => {
     const option = document.createElement('option');
     option.value = device.value;
-    option.textContent = device.name;
+    option.textContent = localizeText(device.name);
+    option.selected = state.selectedDevices.has(device.value);
     select.append(option);
   });
 }
@@ -205,7 +211,7 @@ function updatePreview() {
     const row = document.createElement('tr');
     const cell = document.createElement('td');
     cell.colSpan = 7;
-    cell.textContent = state.records.length ? 'No contacts match the current filter' : 'Download a dataset to preview contacts';
+    cell.textContent = localizeText(state.records.length ? 'No contacts match the current filter' : 'Download a dataset to preview contacts');
     row.append(cell);
     tbody.append(row);
     text('dv-preview-meta', state.records.length ? '0 rows match the current selection' : 'No contacts selected');
@@ -229,7 +235,7 @@ function updatePreview() {
     ];
     cells.forEach((value, index) => {
       const cell = document.createElement('td');
-      cell.textContent = value;
+      cell.textContent = localizeText(value);
       if (index === 0) cell.className = 'numeric';
       if (index === 1 || index === 2) cell.classList.add('emphasis');
       row.append(cell);
@@ -616,6 +622,12 @@ function init() {
       event.preventDefault();
       $('dv-generate').click();
     }
+  });
+
+  document.addEventListener('dmr:languagechange', () => {
+    populateCountries();
+    populateDevices();
+    updateUi();
   });
 
   setStatus('dv-download-status', 'Ready. Download the selected database.');
