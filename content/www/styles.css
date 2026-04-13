@@ -597,7 +597,6 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
   .submit-btn { width: 100%; }
 }
 
-
 .lang-slot {
   display: inline-flex;
   align-items: center;
@@ -902,7 +901,6 @@ body.modal-open {
     flex: 1;
   }
 }
-
 
 .nav-language-switcher {
   display: inline-flex;

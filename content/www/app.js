@@ -1,4 +1,4 @@
-import { getLanguage, getLanguageLabel, getLocale, getSupportedLanguages, initLang, localizeText, setLanguage, t } from './app_lang.js';
+import { getLanguage, getLanguageLabel, getLocale, getSupportedLanguages, initLang, localizeText, setLanguage, t } from '/app_lang.js';
 
 const THEME_KEY = 'dmr.theme';
 const AUTH_TOKEN_KEY = 'dmr.authToken';

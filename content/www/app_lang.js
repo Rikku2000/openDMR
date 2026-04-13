@@ -1,7 +1,7 @@
 const LANG_KEY = 'dmr.lang';
 const DEFAULT_LANG = 'en';
-const LANGUAGE_LABELS = { en: 'English', zh: '中文' };
-const LOCALE_MAP = { en: 'en-US', zh: 'zh-CN' };
+const LANGUAGE_LABELS = { en: 'English', zh: '中文', de: 'Deutsch' };
+const LOCALE_MAP = { en: 'en-US', zh: 'zh-CN', de: 'de-DE' };
 
 const EXACT_TRANSLATIONS = {
   zh: {
@@ -215,6 +215,7 @@ const EXACT_TRANSLATIONS = {
   "Save registration": "保存注册信息",
   "Choose a password": "设置一个密码",
   "English": "English",
+  "Deutsch": "Deutsch",
   "中文": "中文",
   "Language": "语言",
   "Login": "登录",
@@ -317,13 +318,327 @@ const EXACT_TRANSLATIONS = {
   "OBP": "OBP",
   "just now": "刚刚",
   "No APRS entries match the current search": "没有 APRS 条目匹配当前搜索"
-}
+  }, de: {
+    "Dashboard": "Dashboard",
+    "Monitor": "Monitor",
+    "Hotspot": "Hotspot",
+    "Map": "Karte",
+    "Manager": "Manager",
+    "Register": "Registrieren",
+    "The Ultimate Gateway for Digital Operators Seeking Worldwide Connections Without the Static of Analog Radio.": "Das ultimative Gateway für Digitalfunker, die weltweite Verbindungen ohne das Rauschen des Analogfunks suchen.",
+    "Waiting for live data": "Warte auf Live-Daten",
+    "No active transmissions yet": "Noch keine aktiven Übertragungen",
+    "Connecting": "Verbinde",
+    "Waiting for data": "Warte auf Daten",
+    "Local time": "Ortszeit",
+    "Loading date": "Datum wird geladen",
+    "Auto refresh": "Automatische Aktualisierung",
+    "Every 3 seconds": "Alle 3 Sekunden",
+    "Active calls": "Aktive Verbindungen",
+    "No live activity": "Keine Live-Aktivität",
+    "Recent talkgroups": "Letzte Talkgroups",
+    "Across latest 20 records": "Basierend auf den letzten 20 Einträgen",
+    "Online radios": "Online-Funkgeräte",
+    "Seen in recent activity": "In letzter Aktivität gesehen",
+    "Last update": "Letzte Aktualisierung",
+    "Waiting for first sync": "Warte auf erste Synchronisierung",
+    "Currently Active": "Derzeit aktiv",
+    "Live transmissions on the network right now": "Aktuelle Live-Übertragungen im Netzwerk",
+    "No active calls": "Keine aktiven Verbindungen",
+    "Date": "Datum",
+    "Radio": "Funkgerät",
+    "Mode": "Modus",
+    "Slot": "Zeitschlitz",
+    "Node": "Knoten",
+    "Secs": "Sek.",
+    "Traffic snapshot": "Verkehrsübersicht",
+    "Quick breakdown from the recent log": "Schnellübersicht aus dem letzten Protokoll",
+    "No log data yet": "Noch keine Protokolldaten",
+    "Recent PTT / Talkgroups": "Letzte PTT / Talkgroups",
+    "Latest 20 records from your activity log": "Die letzten 20 Einträge aus deinem Aktivitätsprotokoll",
+    "Awaiting log sync": "Warte auf Protokoll-Synchronisierung",
+    "Active": "Aktiv",
+    "Online": "Online",
+    "Conn": "Verb.",
+    "Server version unavailable": "Serverversion nicht verfügbar",
+    "programmed by": "programmiert von",
+    "Github": "GitHub",
+    "Toggle theme": "Design umschalten",
+    "Primary navigation": "Hauptnavigation",
+    "Key metrics": "Kennzahlen",
+    "Recent PTT": "Letzte PTT",
+    "Server version": "Serverversion",
+    "Node vectors": "Knotenvektoren",
+    "No radio vectors loaded": "Keine Funkgeräte-Vektoren geladen",
+    "Connected nodes": "Verbundene Knoten",
+    "Waiting for /STAT": "Warte auf /STAT",
+    "Active talkgroups": "Aktive Talkgroups",
+    "No slot subscriptions yet": "Noch keine Slot-Abonnements",
+    "Server tick": "Server-Tick",
+    "Waiting for counters": "Warte auf Zähler",
+    "Server Monitor": "Server-Monitor",
+    "No reply yet": "Noch keine Antwort",
+    "Node vector": "Knotenvektor",
+    "Radio slot": "Funk-Slot",
+    "Node ID": "Knoten-ID",
+    "Auth": "Authentifizierung",
+    "Seen sec": "Gesehen Sek.",
+    "Slot 1 TG": "Slot 1 TG",
+    "Slot 2 TG": "Slot 2 TG",
+    "Raw /STAT output": "Rohes /STAT-Ergebnis",
+    "Waiting for /STAT reply…": "Warte auf /STAT-Antwort…",
+    "Monitor metrics": "Monitor-Kennzahlen",
+    "Server monitor table": "Server-Monitor-Tabelle",
+    "Loading peers": "Peers werden geladen",
+    "Waiting for /api/openbridge": "Warte auf /api/openbridge",
+    "Bridge status": "Bridge-Status",
+    "Auto refresh every 3 seconds": "Automatische Aktualisierung alle 3 Sekunden",
+    "Configured peers": "Konfigurierte Peers",
+    "No OpenBridge peers loaded": "Keine OpenBridge-Peers geladen",
+    "Active peers": "Aktive Peers",
+    "No recent RX/TX": "Kein aktuelles RX/TX",
+    "Last RX": "Letztes RX",
+    "Waiting for traffic": "Warte auf Verkehr",
+    "Last TX": "Letztes TX",
+    "OpenBridge peers": "OpenBridge-Peers",
+    "Each peer shows the remote server and current bridge state": "Jeder Peer zeigt den entfernten Server und den aktuellen Bridge-Status",
+    "Awaiting bridge sync": "Warte auf Bridge-Synchronisierung",
+    "Bridge": "Bridge",
+    "Status": "Status",
+    "Remote server": "Entfernter Server",
+    "Network ID": "Netzwerk-ID",
+    "Enhanced": "Erweitert",
+    "Talkgroups": "Talkgroups",
+    "OpenBridge metrics": "OpenBridge-Kennzahlen",
+    "No static talkgroups received yet": "Noch keine statischen Talkgroups empfangen",
+    "Hotspots": "Hotspots",
+    "Waiting for MMDVM config frames": "Warte auf MMDVM-Konfigurationsframes",
+    "Unique static TGs": "Eindeutige statische TGs",
+    "No static talkgroups active": "Keine statischen Talkgroups aktiv",
+    "TS1 assignments": "TS1-Zuweisungen",
+    "No TS1 assignments": "Keine TS1-Zuweisungen",
+    "TS2 assignments": "TS2-Zuweisungen",
+    "No TS2 assignments": "Keine TS2-Zuweisungen",
+    "Hotspot static talkgroups": "Statische Hotspot-Talkgroups",
+    "No hotspot data yet": "Noch keine Hotspot-Daten",
+    "Previous": "Zurück",
+    "Page 1 / 1": "Seite 1 / 1",
+    "Next": "Weiter",
+    "Callsign": "Rufzeichen",
+    "Current TS1": "Aktuelles TS1",
+    "Current TS2": "Aktuelles TS2",
+    "Static TS1": "Statisches TS1",
+    "Static TS2": "Statisches TS2",
+    "Last seen": "Zuletzt gesehen",
+    "System talkgroup metrics": "System-Talkgroup-Kennzahlen",
+    "Hotspot pagination controls": "Hotspot-Seitennavigation",
+    "Hotspot static talkgroups table": "Tabelle statischer Hotspot-Talkgroups",
+    "Waiting for map data": "Warte auf Kartendaten",
+    "No APRS stations or hotspot locations yet": "Noch keine APRS-Stationen oder Hotspot-Standorte",
+    "APRS stations": "APRS-Stationen",
+    "No APRS positions parsed yet": "Noch keine APRS-Positionen verarbeitet",
+    "Hotspots with GPS": "Hotspots mit GPS",
+    "No hotspot LAT/LON received yet": "Noch keine Hotspot-LAT/LON empfangen",
+    "Markers": "Marker",
+    "Waiting for positions": "Warte auf Positionen",
+    "Latest seen": "Zuletzt gesehen",
+    "APRS Stations": "APRS-Stationen",
+    "Map idle": "Karte inaktiv",
+    "Station": "Station",
+    "Position table": "Positionstabelle",
+    "Latest merged positions from APRS-IS and hotspot config frames": "Neueste zusammengeführte Positionen aus APRS-IS und Hotspot-Konfigurationsframes",
+    "No positions loaded": "Keine Positionen geladen",
+    "Callsign search": "Rufzeichensuche",
+    "Go to match": "Zum Treffer",
+    "Clear": "Löschen",
+    "Type": "Typ",
+    "Display": "Anzeigename",
+    "Latitude": "Breitengrad",
+    "Longitude": "Längengrad",
+    "Details": "Details",
+    "APRS and map metrics": "APRS- und Karten-Kennzahlen",
+    "Map legend": "Kartenlegende",
+    "APRS map": "APRS-Karte",
+    "APRS table controls": "APRS-Tabellensteuerung",
+    "APRS pagination controls": "APRS-Seitennavigation",
+    "APRS and hotspot position table": "APRS- und Hotspot-Positionstabelle",
+    "Search callsign, display, DMR ID, or node": "Rufzeichen, Anzeigename, DMR-ID oder Knoten suchen",
+    "Ready": "Bereit",
+    "No dataset loaded": "Kein Datensatz geladen",
+    "0 contacts selected": "0 Kontakte ausgewählt",
+    "Browser export": "Browser-Export",
+    "Files are generated locally in your browser": "Dateien werden lokal in deinem Browser erzeugt",
+    "Records loaded": "Einträge geladen",
+    "No dataset downloaded": "Kein Datensatz heruntergeladen",
+    "Countries": "Länder",
+    "Available filter regions": "Verfügbare Filterregionen",
+    "Selected contacts": "Ausgewählte Kontakte",
+    "Adjust filters to change scope": "Passe die Filter an, um den Umfang zu ändern",
+    "Export targets": "Exportziele",
+    "Choose one or more radios": "Wähle ein oder mehrere Funkgeräte",
+    "Data source and filters": "Datenquelle und Filter",
+    "Choose a public DMR database, then refine the export scope": "Wähle eine öffentliche DMR-Datenbank und verfeinere dann den Exportumfang",
+    "Waiting for download": "Warte auf Download",
+    "Database": "Datenbank",
+    "Users [github.com]": "Benutzer [github.com]",
+    "Repeaters [github.com]": "Relais [github.com]",
+    "Users [freeradioid.net]": "Benutzer [freeradioid.net]",
+    "Selection": "Auswahl",
+    "Select all countries": "Alle Länder auswählen",
+    "Only undefined country": "Nur undefiniertes Land",
+    "Download database": "Datenbank herunterladen",
+    "Ready.": "Bereit.",
+    "Selection preview": "Auswahlvorschau",
+    "Browse the current export set 10 rows at a time": "Das aktuelle Exportset jeweils 10 Zeilen auf einmal durchsuchen",
+    "No contacts selected": "Keine Kontakte ausgewählt",
+    "Page 0 / 0": "Seite 0 / 0",
+    "Name": "Name",
+    "City": "Stadt",
+    "State": "Bundesland",
+    "Country": "Land",
+    "Remarks": "Bemerkungen",
+    "Download a dataset to preview contacts": "Lade einen Datensatz herunter, um Kontakte anzuzeigen",
+    "Export devices": "Geräte exportieren",
+    "Generate radio-ready contact files": "Kontaktdateien für Funkgeräte erzeugen",
+    "Devices": "Geräte",
+    "Export selected devices": "Ausgewählte Geräte exportieren",
+    "Choose a dataset and at least one device.": "Wähle einen Datensatz und mindestens ein Gerät.",
+    "APRS passcode": "APRS-Passcode",
+    "Generate an APRS-IS passcode from a callsign": "Einen APRS-IS-Passcode aus einem Rufzeichen erzeugen",
+    "Passcode": "Passcode",
+    "Generate passcode": "Passcode erzeugen",
+    "DV Manager metrics": "DV-Manager-Kennzahlen",
+    "Selection preview pagination controls": "Seitennavigation der Auswahlvorschau",
+    "Enter your callsign": "Gib dein Rufzeichen ein",
+    "Profile sync": "Profil-Synchronisierung",
+    "Session refresh on load": "Sitzung beim Laden aktualisieren",
+    "User profile": "Benutzerprofil",
+    "Update your display name and password": "Anzeigenamen und Passwort aktualisieren",
+    "Please log in to edit your profile.": "Bitte melde dich an, um dein Profil zu bearbeiten.",
+    "Current password": "Aktuelles Passwort",
+    "New password": "Neues Passwort",
+    "Confirm new password": "Neues Passwort bestätigen",
+    "Save profile": "Profil speichern",
+    "Your name": "Dein Name",
+    "Required only when changing password": "Nur beim Ändern des Passworts erforderlich",
+    "Leave blank to keep current password": "Leer lassen, um das aktuelle Passwort beizubehalten",
+    "Repeat new password": "Neues Passwort wiederholen",
+    "New user registration": "Neue Benutzerregistrierung",
+    "Enter DMR-ID, callsign, name and password": "DMR-ID, Rufzeichen, Name und Passwort eingeben",
+    "Password": "Passwort",
+    "Save registration": "Registrierung speichern",
+    "Choose a password": "Wähle ein Passwort",
+    "English": "English",
+    "Deutsch": "Deutsch",
+    "中文": "中文",
+    "Language": "Sprache",
+    "Login": "Anmelden",
+    "Profile": "Profil",
+    "Logout": "Abmelden",
+    "Close": "Schließen",
+    "Use your DMR-ID and password": "Verwende deine DMR-ID und dein Passwort",
+    "Logging in…": "Anmeldung läuft…",
+    "Login successful.": "Anmeldung erfolgreich.",
+    "Login failed.": "Anmeldung fehlgeschlagen.",
+    "Logged out.": "Abgemeldet.",
+    "Registration enabled": "Registrierung aktiviert",
+    "Registration disabled": "Registrierung deaktiviert",
+    "Registration is disabled in dmr.conf.": "Die Registrierung ist in dmr.conf deaktiviert.",
+    "Saving registration…": "Registrierung wird gespeichert…",
+    "Registration saved.": "Registrierung gespeichert.",
+    "Unable to save registration.": "Registrierung konnte nicht gespeichert werden.",
+    "Last successful refresh": "Letzte erfolgreiche Aktualisierung",
+    "No enabled OpenBridge peers configured": "Keine aktivierten OpenBridge-Peers konfiguriert",
+    "Enable OpenBridge1 or OpenBridge2 in dmr.conf": "Aktiviere OpenBridge1 oder OpenBridge2 in dmr.conf",
+    "No bridge traffic": "Kein Bridge-Verkehr",
+    "No peers": "Keine Peers",
+    "Nothing to show until an OpenBridge section is enabled": "Nichts anzuzeigen, bis ein OpenBridge-Abschnitt aktiviert ist",
+    "No peer active in the last 60s": "In den letzten 60 s war kein Peer aktiv",
+    "Bridge active": "Bridge aktiv",
+    "Bridge idle": "Bridge inaktiv",
+    "Unable to load OpenBridge peers": "OpenBridge-Peers konnten nicht geladen werden",
+    "Request failed": "Anfrage fehlgeschlagen",
+    "Unavailable": "Nicht verfügbar",
+    "Idle": "Inaktiv",
+    "Check that server.cpp includes /api/openbridge and restart the server": "Prüfe, ob server.cpp /api/openbridge enthält, und starte den Server neu",
+    "No active transmissions": "Keine aktiven Übertragungen",
+    "Live traffic": "Live-Verkehr",
+    "No recent log entries": "Keine aktuellen Protokolleinträge",
+    "Across rolling 20 records": "Basierend auf den laufenden letzten 20 Einträgen",
+    "No recent activity": "Keine aktuelle Aktivität",
+    "OpenBridge events": "OpenBridge-Ereignisse",
+    "APRS events": "APRS-Ereignisse",
+    "SMS events": "SMS-Ereignisse",
+    "Voice / talk events": "Sprach- / Sprechereignisse",
+    "Unable to load recent log": "Letztes Protokoll konnte nicht geladen werden",
+    "No connected nodes reported": "Keine verbundenen Knoten gemeldet",
+    "Live nodes": "Live-Knoten",
+    "No active nodes reported": "Keine aktiven Knoten gemeldet",
+    "No connected nodes found in /STAT output": "Keine verbundenen Knoten in der /STAT-Ausgabe gefunden",
+    "No /STAT reply": "Keine /STAT-Antwort",
+    "STAT connected": "STAT verbunden",
+    "STAT idle": "STAT inaktiv",
+    "No connected nodes": "Keine verbundenen Knoten",
+    "Unable to load /STAT output": "/STAT-Ausgabe konnte nicht geladen werden",
+    "STAT unavailable": "STAT nicht verfügbar",
+    "Check the local UDP /STAT responder and try again": "Prüfe den lokalen UDP-/STAT-Responder und versuche es erneut",
+    "Unable to read /STAT": "/STAT konnte nicht gelesen werden",
+    "No hotspot static talkgroups reported yet": "Noch keine statischen Hotspot-Talkgroups gemeldet",
+    "No hotspot data": "Keine Hotspot-Daten",
+    "No static talkgroups announced by hotspots": "Keine statischen Talkgroups von Hotspots angekündigt",
+    "Total TS1 static assignments": "Gesamte statische TS1-Zuweisungen",
+    "Total TS2 static assignments": "Gesamte statische TS2-Zuweisungen",
+    "Unable to load hotspot static talkgroups": "Statische Hotspot-Talkgroups konnten nicht geladen werden",
+    "Check that /api/systemstg is available and restart the server": "Prüfe, ob /api/systemstg verfügbar ist, und starte den Server neu",
+    "Lat/Lon": "Breite/Länge",
+    "Map live": "Karte live",
+    "Stations plus hotspot markers": "Stationen plus Hotspot-Marker",
+    "No packets yet": "Noch keine Pakete",
+    "Unable to load APRS map data": "APRS-Kartendaten konnten nicht geladen werden",
+    "Check that /api/aprs is available and APRS is enabled": "Prüfe, ob /api/aprs verfügbar ist und APRS aktiviert ist",
+    "Profile editing is disabled because auth is not enabled in dmr.conf.": "Die Profilbearbeitung ist deaktiviert, weil die Authentifizierung in dmr.conf nicht aktiviert ist.",
+    "Ready. Leave password fields blank to change only the name.": "Bereit. Lass die Passwortfelder leer, um nur den Namen zu ändern.",
+    "Please log in first.": "Bitte melde dich zuerst an.",
+    "New passwords do not match.": "Die neuen Passwörter stimmen nicht überein.",
+    "Saving profile…": "Profil wird gespeichert…",
+    "Profile updated.": "Profil aktualisiert.",
+    "Unable to update profile.": "Profil konnte nicht aktualisiert werden.",
+    "Live APRS station packet": "Live-APRS-Station-Paket",
+    "Hotspot via openDMR": "Hotspot über openDMR",
+    "Center map on this callsign": "Karte auf dieses Rufzeichen zentrieren",
+    "Unknown": "Unbekannt",
+    "APRS station": "APRS-Station",
+    "YES": "JA",
+    "NO": "NEIN",
+    "ALL": "ALLE",
+    "Downloading…": "Wird heruntergeladen…",
+    "Exporting…": "Wird exportiert…",
+    "Users [DMR-Database]": "Benutzer [DMR-Database]",
+    "Repeaters [DMR-Database]": "Relais [DMR-Database]",
+    "No contacts match the current filter": "Keine Kontakte entsprechen dem aktuellen Filter",
+    "0 rows match the current selection": "0 Zeilen entsprechen der aktuellen Auswahl",
+    "Download failed": "Download fehlgeschlagen",
+    "No records match the current filters.": "Keine Datensätze entsprechen den aktuellen Filtern.",
+    "Select at least one device before exporting.": "Wähle vor dem Export mindestens ein Gerät aus.",
+    "Ready. Download the selected database.": "Bereit. Lade die ausgewählte Datenbank herunter.",
+    "Undefined": "Undefiniert",
+    "ACTIVE": "AKTIV",
+    "IDLE": "INAKTIV",
+    "UNRESOLVED": "UNGELÖST",
+    "DISABLED": "DEAKTIVIERT",
+    "UNKNOWN": "UNBEKANNT",
+    "TALK": "SPRECHEN",
+    "SMS": "SMS",
+    "OBP": "OBP",
+    "just now": "gerade eben",
+    "No APRS entries match the current search": "Keine APRS-Einträge entsprechen der aktuellen Suche"
+  }
 };
 
 const TEXT_NODE_KEY = '__i18nOriginalText';
 
 export function getSupportedLanguages() {
-  return ['en', 'zh'];
+  return ['en', 'zh', 'de'];
 }
 
 export function getLanguageLabel(lang) {
@@ -356,6 +671,55 @@ function localizePattern(value, lang = getLanguage()) {
   if (lang === 'en') return value;
   const str = String(value ?? '');
   let m = null;
+
+  if (lang === 'de') {
+    if ((m = str.match(/^Server: (.+)$/))) return `Server: ${m[1]}`;
+    if ((m = str.match(/^Updated (.+)$/))) return `Aktualisiert ${m[1]}`;
+    if ((m = str.match(/^DMR-ID: (.+)$/))) return `DMR-ID: ${m[1]}`;
+    if ((m = str.match(/^Page (\d+) \/ (\d+)$/))) return `Seite ${m[1]} / ${m[2]}`;
+    if ((m = str.match(/^Showing (\d+)-(\d+) of (\d+) rows$/))) return `Zeige ${m[1]}-${m[2]} von ${m[3]} Zeilen`;
+    if ((m = str.match(/^Showing (\d+)-(\d+) of (\d+) hotspots?$/))) return `Zeige ${m[1]}-${m[2]} von ${m[3]} Hotspots`;
+    if ((m = str.match(/^Showing (\d+)-(\d+) of (\d+) position rows?(?: · (\d+) matches? for “(.+)”)?$/))) {
+      return m[4]
+        ? `Zeige ${m[1]}-${m[2]} von ${m[3]} Positionszeilen · ${m[4]} Treffer für „${m[5]}“`
+        : `Zeige ${m[1]}-${m[2]} von ${m[3]} Positionszeilen`;
+    }
+    if ((m = str.match(/^0 matches for “(.+)”$/))) return `0 Treffer für „${m[1]}“`;
+    if ((m = str.match(/^Undefined \((\d+)\)$/))) return `Undefiniert (${m[1]})`;
+    if ((m = str.match(/^(\d+) total filter buckets$/))) return `${m[1]} Filtergruppen insgesamt`;
+    if ((m = str.match(/^(\d+) rows ready for export$/))) return `${m[1]} Zeilen exportbereit`;
+    if ((m = str.match(/^(\d+) device(?:s)? selected$/))) return `${m[1]} Gerät(e) ausgewählt`;
+    if ((m = str.match(/^(.+) · (\d+) records loaded$/))) return `${m[1]} · ${m[2]} Einträge geladen`;
+    if ((m = str.match(/^(\d+) contact(?:s)? selected$/))) return `${m[1]} Kontakt(e) ausgewählt`;
+    if ((m = str.match(/^Downloading database… (\d+)%$/))) return `Datenbank wird heruntergeladen… ${m[1]}%`;
+    if ((m = str.match(/^Loaded (\d+) record(?:s)? from (.+)\.$/))) return `${m[1]} Einträge aus ${m[2]} geladen.`;
+    if ((m = str.match(/^No records returned by (.+)\.$/))) return `Keine Einträge von ${m[1]} zurückgegeben.`;
+    if ((m = str.match(/^Unable to download (.+)\. (.+)$/))) return `${m[1]} konnte nicht heruntergeladen werden. ${m[2]}`;
+    if ((m = str.match(/^Generating (.+) \((\d+)\/(\d+)\)…$/))) return `${m[1]} wird erzeugt (${m[2]}/${m[3]})…`;
+    if ((m = str.match(/^Finished (\d+) export(?:s)?\.$/))) return `${m[1]} Export(e) abgeschlossen.`;
+    if ((m = str.match(/^Export failed\. (.+)$/))) return `Export fehlgeschlagen. ${m[1]}`;
+    if ((m = str.match(/^(\d+) peer(?:s)? loaded$/))) return `${m[1]} Peer(s) geladen`;
+    if ((m = str.match(/^Latest radio (.+)$/))) return `Letztes Funkgerät ${m[1]}`;
+    if ((m = str.match(/^(\d+) active call(?:s)?$/))) return `${m[1]} aktive Verbindung(en)`;
+    if ((m = str.match(/^(\d+) active call(?:s)? across (\d+) talkgroup(?:s)?$/))) return `${m[1]} aktive Verbindung(en) über ${m[2]} Talkgroup(s)`;
+    if ((m = str.match(/^(.+? \(.+\)) on (.+)$/))) return `${m[1]} auf ${m[2]}`;
+    if ((m = str.match(/^Latest: (.+)$/))) return `Zuletzt: ${m[1]}`;
+    if ((m = str.match(/^Out of (\d+) recent records$/))) return `Aus ${m[1]} letzten Einträgen`;
+    if ((m = str.match(/^(\d+) rows loaded$/))) return `${m[1]} Zeilen geladen`;
+    if ((m = str.match(/^Server sec (\d+)$/))) return `Server-Sek. ${m[1]}`;
+    if ((m = str.match(/^(\d+) node(?:s)? across (\d+) vector(?:s)?$/))) return `${m[1]} Knoten über ${m[2]} Vektor(en)`;
+    if ((m = str.match(/^(\d+) node(?:s)? loaded$/))) return `${m[1]} Knoten geladen`;
+    if ((m = str.match(/^(.+) seen (.+) · (\d+) unique static talkgroup(?:s)?$/))) return `${m[1]} gesehen ${m[2]} · ${m[3]} eindeutige statische Talkgroups`;
+    if ((m = str.match(/^(\d+) APRS station(?:s)? · (\d+) hotspot(?:s)?$/))) return `${m[1]} APRS-Station(en) · ${m[2]} Hotspot(s)`;
+    if ((m = str.match(/^(\d+) marker(?:s)? on map$/))) return `${m[1]} Marker auf der Karte`;
+    if ((m = str.match(/^(\d+)m ago$/))) return `vor ${m[1]} Min.`;
+    if ((m = str.match(/^(\d+)h ago$/))) return `vor ${m[1]} Std.`;
+    if ((m = str.match(/^(\d+)d ago$/))) return `vor ${m[1]} T.`;
+    if ((m = str.match(/^(\d+)s ago$/))) return `vor ${m[1]} Sek.`;
+    if ((m = str.match(/^(.+) from (.+)$/))) return `${m[1]} von ${m[2]}`;
+    if ((m = str.match(/^(.+) to (.+)$/))) return `${m[1]} an ${m[2]}`;
+    return translateExact(str, lang);
+  }
 
   if ((m = str.match(/^Server: (.+)$/))) return `服务器：${m[1]}`;
   if ((m = str.match(/^Updated (.+)$/))) return `已更新 ${m[1]}`;
@@ -452,7 +816,7 @@ export function applyTranslations(root = document) {
     translateAttribute(el, 'title', lang);
   });
 
-  document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+  document.documentElement.lang = lang === 'zh' ? 'zh-CN' : lang === 'de' ? 'de-DE' : 'en';
 }
 
 export function initLang() {
